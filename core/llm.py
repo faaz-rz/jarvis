@@ -89,7 +89,7 @@ class LLMEngine:
                 n_ctx=4096,          # Safe limit for 4GB VRAM
                 n_threads=6,
                 n_batch=512,         # Lower batch size to reduce VRAM spikes
-                n_gpu_layers=-1,     # Offload all layers to GPU (driver handles overflow to RAM)
+                n_gpu_layers=20,     # Adjusted for 4GB VRAM (prevents overflow to RAM)
                 verbose=True
             )
             self.loaded = True

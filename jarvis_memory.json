@@ -6,94 +6,6 @@
     "history": [
         {
             "role": "user",
-            "content": "what is the capital of france"
-        },
-        {
-            "role": "assistant",
-            "content": "My AI models are currently unavailable. I can still run commands like 'open calculator' or 'learn this'."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Hello! My AI core is currently offline, but my command modules are fully operational."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Hi there."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Hello!"
-        },
-        {
-            "role": "user",
-            "content": "my name is faaz"
-        },
-        {
-            "role": "assistant",
-            "content": "Nice to meet you, faaz. I've saved that to memory."
-        },
-        {
-            "role": "user",
-            "content": "what i you're name"
-        },
-        {
-            "role": "assistant",
-            "content": "My AI system reported: System Error: llama-cpp-python is missing or broken (check CUDA/DLLs). Falling back to mock response.. I can still run commands."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Hi there."
-        },
-        {
-            "role": "user",
-            "content": "what is my name"
-        },
-        {
-            "role": "assistant",
-            "content": "Your name is faaz."
-        },
-        {
-            "role": "user",
-            "content": "what is the capital of france"
-        },
-        {
-            "role": "assistant",
-            "content": "The capital of France is Paris."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "At your service."
-        },
-        {
-            "role": "user",
-            "content": "what is you're name"
-        },
-        {
-            "role": "assistant",
-            "content": "My name is J.A.R.V.I.S."
-        },
-        {
-            "role": "user",
             "content": "hi"
         },
         {
@@ -203,6 +115,94 @@
         {
             "role": "assistant",
             "content": "I'm happy to help you run the Sudoku solver, but since I can't interact directly with your local environment, I'll guide you through the process. You'll need to do the following:\n\n1. Save the code as a .py file (e.g., sudoku.py).\n2. Open a Python environment (e.g., Python IDLE or Jupyter Notebook).\n3. Navigate to the directory where you saved the .py file using the `cd` command.\n4. Run the .py file with the `python sudoku.py` command.\n\nAfter following these steps, the Sudoku solver should run, and you should see the solved Sudoku board printed to your console.\n\nIf you encounter any issues or have further questions, feel free to ask."
+        },
+        {
+            "role": "user",
+            "content": "hi"
+        },
+        {
+            "role": "assistant",
+            "content": "Hello!"
+        },
+        {
+            "role": "user",
+            "content": "what is the capital of mongolia"
+        },
+        {
+            "role": "assistant",
+            "content": "The capital of Mongolia is Ulaanbaatar. It's the largest city in the country and serves as the political, economic, and cultural center."
+        },
+        {
+            "role": "user",
+            "content": "what is the capital of india?"
+        },
+        {
+            "role": "assistant",
+            "content": "The capital of India is New Delhi. It serves as the center of the Indian government and is a major metropolitan city in northern India."
+        },
+        {
+            "role": "user",
+            "content": "which animal is the fastest in the world"
+        },
+        {
+            "role": "assistant",
+            "content": "The fastest animal in the world is the peregrine falcon. It can reach speeds of up to 240 mph (386 km/h) in a dive, making it the fastest-moving animal on Earth."
+        },
+        {
+            "role": "user",
+            "content": "ok thank you"
+        },
+        {
+            "role": "assistant",
+            "content": "Happy to help."
+        },
+        {
+            "role": "user",
+            "content": "hi"
+        },
+        {
+            "role": "assistant",
+            "content": "Hello!"
+        },
+        {
+            "role": "user",
+            "content": "what is quantum computing?"
+        },
+        {
+            "role": "assistant",
+            "content": "Quantum computing is a new and rapidly evolving technology that uses the principles of quantum mechanics to perform computations. Unlike classical computers, which use bits (0s and 1s) to process information, quantum computers use quantum bits or 'qubits', which can exist in multiple states simultaneously. This allows quantum computers to process and analyze vast amounts of data much more rapidly than classical computers. The technology has the potential to revolutionize fields such as cryptography, artificial intelligence, and drug discovery.\n\nIn essence, while classical computers follow the laws of classical mechanics, quantum computers follow the laws of quantum mechanics, which allow them to perform certain types of calculations exponentially faster than classical computers. However, quantum computers are still in the early stages of development and face challenges such as maintaining the stability of the fragile qubits.\n\nLet me know if you would like any more information or examples.\n\n[Example use case for quantum computing: Shor's algorithm, a quantum algorithm, can break the widely used RSA encryption method which is used to secure many online transactions. However, quantum computers are still in the early stages of development and face challenges in maintaining the stability of fragile qubits. It's a double-edged sword for cybersecurity.]"
+        },
+        {
+            "role": "user",
+            "content": "thank you"
+        },
+        {
+            "role": "assistant",
+            "content": "Happy to help."
+        },
+        {
+            "role": "user",
+            "content": "hi"
+        },
+        {
+            "role": "assistant",
+            "content": "Hi there."
+        },
+        {
+            "role": "user",
+            "content": "what is cloud computing?"
+        },
+        {
+            "role": "assistant",
+            "content": "Cloud computing is a technology that allows users to access computing resources, such as storage, processing power, and software applications, over the internet. Instead of storing and processing data on local servers or personal devices, cloud computing allows users to store and process data on remote servers managed by third-party providers.\n\nThe main benefits of cloud computing include scalability, cost savings, and flexibility. With cloud computing, users can quickly scale up or down their computing resources as their needs change, only paying for what they use. Cloud computing also enables remote work and collaboration since users can access their data and applications from anywhere with an internet connection.\n\nCloud computing can be classified into three main service models: Infrastructure as a Service (IaaS), Platform as a Service (PaaS), and Software as a Service (SaaS). IaaS provides virtualized infrastructure resources, PaaS offers a platform for application development, and SaaS delivers software applications on a subscription basis.\n\nLet me know if you would like more information or examples of how cloud computing is used."
+        },
+        {
+            "role": "user",
+            "content": "ok thank you"
+        },
+        {
+            "role": "assistant",
+            "content": "Happy to help."
         }
     ],
     "system_prompt_extras": []
