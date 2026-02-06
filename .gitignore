@@ -1,0 +1,15 @@
+# Environments
+.venv/
+__pycache__/
+
+# Logs
+*.log
+*.txt
+debug_log_cuda.txt
+verify_log.txt
+
+# Temporary Scripts
+verify_*.py
+diagnose_*.py
+check_gpu.py
+test_import.py
