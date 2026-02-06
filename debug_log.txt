@@ -1,0 +1,50 @@
+2026-02-06 08:03:02,936 INFO: Registered skill: SystemControl
+2026-02-06 08:03:02,936 INFO: Loaded 6 skills.
+2026-02-06 18:56:43,689 INFO: Memory loaded from jarvis_memory.json
+2026-02-06 18:56:43,689 INFO: LLM Engine Configured. Target Model: D:\models\capybara\capybarahermes-2.5-mistral-7b.Q5_0.gguf
+2026-02-06 18:56:43,775 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-02-06 18:56:43,775 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2026-02-06 18:56:44,047 INFO: Jarvis Engine Starting...
+2026-02-06 18:56:44,054 INFO: Registered skill: AppControl
+2026-02-06 18:56:44,055 INFO: Registered skill: DevMode
+2026-02-06 18:56:44,055 INFO: Registered skill: SelfLearning
+2026-02-06 18:56:44,058 INFO: Registered skill: Search
+2026-02-06 18:56:44,059 INFO: Registered skill: SmallTalk
+2026-02-06 18:56:45,333 INFO: Registered skill: SystemControl
+2026-02-06 18:56:45,333 INFO: Loaded 6 skills.
+2026-02-06 18:57:10,049 ERROR: LLM FAILURE RESPONSE: System Error: llama-cpp-python is missing or broken (check CUDA/DLLs). Falling back to mock response.
+2026-02-06 19:31:35,980 INFO: Injected DLL Path: C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\nvidia\cuda_runtime\bin
+2026-02-06 19:31:35,980 INFO: Injected DLL Path: C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\nvidia\cublas\bin
+2026-02-06 19:31:36,166 INFO: Memory loaded from jarvis_memory.json
+2026-02-06 19:31:36,166 INFO: LLM Engine Configured. Target Model: D:\models\capybara\capybarahermes-2.5-mistral-7b.Q5_0.gguf
+2026-02-06 19:31:36,228 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-02-06 19:31:36,228 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2026-02-06 19:31:36,330 INFO: Jarvis Engine Starting...
+2026-02-06 19:31:36,335 INFO: Registered skill: AppControl
+2026-02-06 19:31:36,335 INFO: Registered skill: DevMode
+2026-02-06 19:31:36,336 INFO: Registered skill: SelfLearning
+2026-02-06 19:31:36,339 INFO: Registered skill: Search
+2026-02-06 19:31:36,339 INFO: Registered skill: SmallTalk
+2026-02-06 19:31:36,479 INFO: Registered skill: SystemControl
+2026-02-06 19:31:36,479 INFO: Loaded 6 skills.
+2026-02-06 19:31:54,469 INFO: Loading Llama model from D:\models\capybara\capybarahermes-2.5-mistral-7b.Q5_0.gguf...
+2026-02-06 19:32:01,795 INFO: Model loaded successfully.
+2026-02-06 20:23:12,533 INFO: Injected DLL Path: C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\nvidia\cuda_runtime\bin
+2026-02-06 20:23:12,533 INFO: Injected DLL Path: C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\nvidia\cublas\bin
+2026-02-06 20:23:12,764 INFO: Memory loaded from jarvis_memory.json
+2026-02-06 20:23:12,764 INFO: LLM Engine Configured. Target Model: D:\models\capybara\capybarahermes-2.5-mistral-7b.Q5_0.gguf
+2026-02-06 20:23:12,808 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-02-06 20:23:12,808 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2026-02-06 20:23:12,912 INFO: Jarvis Engine Starting...
+2026-02-06 20:23:12,916 INFO: Registered skill: AppControl
+2026-02-06 20:23:12,917 INFO: Registered skill: AutomationSkill
+2026-02-06 20:23:12,917 INFO: Registered skill: DevMode
+2026-02-06 20:23:12,918 INFO: Registered skill: SelfLearning
+2026-02-06 20:23:13,453 INFO: Registered skill: ResearchSkill
+2026-02-06 20:23:13,455 INFO: Registered skill: Search
+2026-02-06 20:23:13,456 INFO: Registered skill: SmallTalk
+2026-02-06 20:23:13,566 INFO: Registered skill: SystemControl
+2026-02-06 20:23:13,930 INFO: Registered skill: VisionSkill
+2026-02-06 20:23:13,930 INFO: Loaded 9 skills.
+2026-02-06 20:23:45,035 ERROR: Error in skill SmallTalk: name 'lower' is not defined
+2026-02-06 20:24:10,557 ERROR: Error in skill SmallTalk: name 'lower' is not defined

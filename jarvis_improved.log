@@ -1,0 +1,22 @@
+2025-10-23 19:33:09,693 INFO: Starting JARVIS (improved)
+2025-10-23 19:33:09,775 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-10-23 19:33:09,776 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2025-10-23 19:33:11,157 INFO: JARVIS: JARVIS ready.
+2025-10-23 19:33:17,411 WARNING: llama_cpp not available; model cannot be loaded
+2025-10-23 19:33:17,414 INFO: JARVIS: (LLM error) Model not available
+2025-10-23 19:35:46,042 INFO: JARVIS: Shutting down GUI.
+2025-10-23 19:35:48,981 INFO: Jarvis shutdown complete
+2025-10-23 19:35:53,237 INFO: Starting JARVIS (improved)
+2025-10-23 19:35:53,298 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-10-23 19:35:53,298 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2025-10-23 19:35:53,503 INFO: JARVIS: JARVIS ready.
+2025-10-23 19:35:59,633 WARNING: llama_cpp not available; model cannot be loaded
+2025-10-23 19:35:59,635 INFO: JARVIS: (LLM error) Model not available
+2025-10-23 19:37:30,125 INFO: Starting JARVIS (improved)
+2025-10-23 19:37:30,182 INFO: Imported existing <module 'comtypes.gen' from 'C:\\Users\\faaz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-10-23 19:37:30,183 INFO: Using writeable comtypes cache directory: 'C:\Users\faaz\AppData\Local\Programs\Python\Python311\Lib\site-packages\comtypes\gen'
+2025-10-23 19:37:30,346 INFO: JARVIS: JARVIS ready.
+2025-10-23 19:37:50,094 WARNING: llama_cpp not available; model cannot be loaded
+2025-10-23 19:37:50,098 INFO: JARVIS: (LLM error) Model not available
+2025-10-23 19:38:45,718 INFO: JARVIS: Shutting down GUI.
+2025-10-23 19:38:48,630 INFO: Jarvis shutdown complete
