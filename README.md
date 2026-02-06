@@ -1,6 +1,4 @@
-It looks like the search returned the Microsoft JARVIS repository, but you're working on your own jarvis repository (`faaz-rz/jarvis`). Let me get information about your specific repository:Based on the repository structure and files in `faaz-rz/jarvis`, here's a comprehensive README file:
 
-```markdown name=README.md
 # JARVIS
 
 An intelligent personal assistant system built with Python, featuring voice interaction, machine learning capabilities, and extensible skill modules.
