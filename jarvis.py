@@ -6,9 +6,44 @@ import sys
 import os
 import logging
 
+import logging
+import subprocess
+
+# DEBUG: Check environment
+print(f"DEBUG: Executable: {sys.executable}")
+print(f"DEBUG: Python Version: {sys.version}")
+
+# [CRITICAL] Python 3.14 Compatibility Fix
+# Python 3.13+ removed 'aifc', breaking speech_recognition. 
+# Also, binary wheels for 3.14 don't exist yet for sounddevice/cffi.
+if sys.version_info >= (3, 13):
+    print("\n[CRITICAL WARNING] You are running Python 3.13+ (Incompatible with Audio Libraries)")
+    print("Attempting to auto-switch to .venv (Python 3.11)...")
+    
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(base_dir, ".venv", "Scripts", "python.exe")
+    
+    if os.path.exists(venv_python):
+        print(f"Re-launching with: {venv_python}")
+        # Pass all arguments to the new process
+        subprocess.call([venv_python] + sys.argv)
+        sys.exit(0)
+    else:
+        print(f"[ERROR] Could not find venv at {venv_python}")
+        print("Please install Python 3.11 and create a venv, or run this script with a compatible Python version.")
+        sys.exit(1)
+
 # Ensure we can import from local modules
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
+
+# [FIX] Force load venv site-packages if missing (System Environment Issue)
+venv_site = os.path.join(BASE_DIR, '.venv', 'Lib', 'site-packages')
+if os.path.exists(venv_site) and venv_site not in sys.path:
+    print(f"DEBUG: Manually adding venv site-packages: {venv_site}")
+    sys.path.append(venv_site)
+    import site
+    site.addsitedir(venv_site)
 
 # Setup logging
 logging.basicConfig(

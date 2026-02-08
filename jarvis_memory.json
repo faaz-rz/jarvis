@@ -10,62 +10,6 @@
         },
         {
             "role": "assistant",
-            "content": "At your service."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "At your service."
-        },
-        {
-            "role": "user",
-            "content": "what is the capital of india?"
-        },
-        {
-            "role": "assistant",
-            "content": "The capital of India is New Delhi."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Ready for instructions."
-        },
-        {
-            "role": "user",
-            "content": "learn rust programming"
-        },
-        {
-            "role": "assistant",
-            "content": "Certainly! I will start by gathering resources on Rust programming. Here are some useful links to get you started:\n\n1. [Rust programming language website](https://www.rust-lang.org/) - This is the official Rust website, where you'll find tutorials, documentation, and community resources.\n2. [The Book](https://doc.rust-lang.org/book/title-page.html) - An online book that covers the Rust programming language, from basics to advanced concepts.\n3. [Rust by Example](https://doc.rust-lang.org/rust-by-example/index.html) - An online reference that provides examples of Rust code for various concepts and features.\n4. [Rust Cookbook](https://rust-lang-nursery.github.io/rust-cookbook/reference.html) - A collection of solutions to common problems in Rust programming.\n5. [Rust community on Reddit](https://www.reddit.com/r/rust/) - A subreddit where you can ask questions, share resources, and engage with the Rust community.\n\nFeel free to use these resources to learn Rust programming. If you have any specific questions or need further assistance, I'm here to help."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
-            "content": "Hi there."
-        },
-        {
-            "role": "user",
-            "content": "thank you"
-        },
-        {
-            "role": "assistant",
-            "content": "Anytime."
-        },
-        {
-            "role": "user",
-            "content": "hi"
-        },
-        {
-            "role": "assistant",
             "content": "Hello!"
         },
         {
@@ -203,6 +147,62 @@
         {
             "role": "assistant",
             "content": "Happy to help."
+        },
+        {
+            "role": "user",
+            "content": "hi"
+        },
+        {
+            "role": "assistant",
+            "content": "Hello!"
+        },
+        {
+            "role": "user",
+            "content": "what is the time"
+        },
+        {
+            "role": "assistant",
+            "content": "The current time is 10:52 PM."
+        },
+        {
+            "role": "user",
+            "content": "what is the first 10 values of pi"
+        },
+        {
+            "role": "assistant",
+            "content": "My AI system reported: System Error: llama-cpp-python is missing or broken (check CUDA/DLLs). Falling back to mock response.. I can still run commands."
+        },
+        {
+            "role": "user",
+            "content": "what is the capital of france?"
+        },
+        {
+            "role": "assistant",
+            "content": "My AI system reported: System Error: llama-cpp-python is missing or broken (check CUDA/DLLs). Falling back to mock response.. I can still run commands."
+        },
+        {
+            "role": "user",
+            "content": "what is the capital of france"
+        },
+        {
+            "role": "assistant",
+            "content": "The capital of France is Paris."
+        },
+        {
+            "role": "user",
+            "content": "what is the time"
+        },
+        {
+            "role": "assistant",
+            "content": "The current time is 10:57 PM."
+        },
+        {
+            "role": "user",
+            "content": "what is the time"
+        },
+        {
+            "role": "assistant",
+            "content": "The current time is 10:59 PM."
         }
     ],
     "system_prompt_extras": []

@@ -7,6 +7,8 @@ from core.memory import Memory
 from core.llm import LLMEngine
 from core.ui import BaseUI, ConsoleUI, TkinterUI
 from core.skills import SkillManager, SkillContext
+from core.voice import VoiceManager
+from core.tts import TTSManager
 
 try:
     import pyttsx3
@@ -29,20 +31,21 @@ class JarvisEngine:
         self.context = SkillContext(self)
         self.skill_manager = SkillManager(self.context)
         
-        self.tts_engine = None
-        self._setup_tts()
+        self.voice_manager = None # placeholder
+        self.tts = TTSManager()
         
+        self.voice_manager = VoiceManager(self)
         self.running = True
 
-    def _setup_tts(self):
-        if pyttsx3:
-            try:
-                self.tts_engine = pyttsx3.init()
-                self.tts_engine.setProperty('rate', 160)
-                # Run TTS in a separate thread loop is tricky with pyttsx3
-                # We'll just call it blocking for now or use a queue if needed
-            except Exception as e:
-                logging.error(f"TTS Init failed: {e}")
+    def _on_speech_start(self):
+        if self.voice_manager:
+            self.voice_manager.pause()
+
+    def _on_speech_end(self):
+        if self.voice_manager:
+            self.voice_manager.resume()
+
+
 
     def start(self):
         logging.info("Jarvis Engine Starting...")
@@ -50,6 +53,9 @@ class JarvisEngine:
         self.ui.display_message("System Online. skills loaded.", "SYSTEM")
         self.speak("System Online.")
         
+        # Start Voice Listener
+        self.voice_manager.start_listening()
+
         # Start the UI (blocking for Tkinter)
         # For Console, we need a loop
         if isinstance(self.ui, ConsoleUI):
@@ -185,27 +191,13 @@ class JarvisEngine:
         if "```" in clean_text:
             clean_text = "I have generated the code for you."
             
-        if self.tts_engine:
-            try:
-                # pyttsx3 runAndWait is blocking, so we might want to thread this
-                # or just accept the pause. Threading pyttsx3 is notoriously unstable.
-                # A simple daemon thread for saying one thing:
-                def _say():
-                    try:
-                        # Re-init in thread if needed or use properly
-                        # Usually best to have one specialized TTS thread with a queue
-                        # For simplicity here:
-                        engine = pyttsx3.init()
-                        engine.say(clean_text)
-                        engine.runAndWait()
-                    except:
-                        pass
-                threading.Thread(target=_say, daemon=True).start()
-            except Exception:
-                pass
+        if self.tts:
+             self.tts.speak(clean_text)
 
     def shutdown(self):
         self.running = False
+        self.voice_manager.stop_listening()
+        self.tts.stop()
         self.speak("Shutting down.")
         self.memory.save()
         if isinstance(self.ui, TkinterUI):
