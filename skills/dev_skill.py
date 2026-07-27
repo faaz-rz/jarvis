@@ -1,13 +1,26 @@
+import os
 import subprocess
+import sys
+from pathlib import Path
+
+from core.config import PROJECT_ROOT, coding_model_path
+from core.llm import LLMUnavailableError
+from core.skills import BaseSkill
+
 
 class DevSkill(BaseSkill):
     name = "DevMode"
     description = "Generates and saves code using CodeLlama."
+    priority = 80
 
-    CODING_MODEL = r"D:\models\codellama\codellama-7b-instruct.Q5_K_M.gguf"
+    def __init__(self, context):
+        super().__init__(context)
+        configured = coding_model_path()
+        self.coding_model = str(configured) if configured else None
+        output_dir = Path(os.environ.get("JARVIS_GENERATED_DIR", PROJECT_ROOT))
+        self.generated_file = output_dir.expanduser().resolve() / "generated_script.py"
 
     def handle(self, text: str) -> bool:
-        print(f"DEBUG: DevSkill handle called with: '{text}'")
         lower = text.lower()
         
         # Explicit Mode Switching
@@ -32,38 +45,58 @@ class DevSkill(BaseSkill):
         return False
 
     def switch_to_coding(self):
+        if not self.coding_model:
+            self.context.speak(
+                "Coding mode is not configured. Set CODE_MODEL_PATH to a GGUF coding model."
+            )
+            return
+
         current_path = self.context.engine.llm.current_model_path
-        if current_path == self.CODING_MODEL:
+        if current_path == self.coding_model:
             self.context.speak("I am already in Coding Mode.")
             return
 
         self.context.speak("Switching to CodeLlama model. This may take a moment...")
-        success = self.context.engine.llm.reload_model(self.CODING_MODEL)
+        success = self.context.engine.llm.reload_model(self.coding_model)
         if success:
             self.context.speak("Coding Mode Enabled. Initialized CodeLlama 7B.")
         else:
-             self.context.speak("Failed to load CodeLlama. Reverting to default.")
-             self.context.engine.llm.reload_model(self.context.engine.llm.default_model_path)
+            self.context.speak("Failed to load the coding model. Reverting to default.")
+            if hasattr(self.context.engine.llm, "reload_default_model"):
+                self.context.engine.llm.reload_default_model()
 
     def switch_to_normal(self):
-        default = self.context.engine.llm.default_model_path
-        if self.context.engine.llm.current_model_path == default:
+        llm = self.context.engine.llm
+        default = llm.default_model_path
+        if (
+            llm.current_model_path == default
+            and getattr(llm, "backend", None) == getattr(llm, "default_backend", None)
+        ):
             self.context.speak("I am already in Normal Mode.")
             return
 
         self.context.speak("Reverting to standard conversation model...")
-        success = self.context.engine.llm.reload_model(default)
-        if success:
-             self.context.speak("Normal Mode Enabled.")
+        if hasattr(llm, "reload_default_model"):
+            success = llm.reload_default_model()
         else:
-             self.context.speak("Error reverting model. System check required.")
+            success = bool(default and llm.reload_model(default))
+        if success:
+            self.context.speak("Normal Mode Enabled.")
+        else:
+            self.context.speak("The standard model is not configured.")
 
     def start_dev_session(self, trigger_text):
+        if not self.coding_model:
+            self.context.speak(
+                "Coding mode is not configured. Set CODE_MODEL_PATH to a GGUF coding model."
+            )
+            return
         # Auto-switch
-        if self.context.engine.llm.current_model_path != self.CODING_MODEL:
-             self.context.speak("Using Coding Model...")
-             self.switch_to_coding()
-             if self.context.engine.llm.current_model_path != self.CODING_MODEL: return
+        if self.context.engine.llm.current_model_path != self.coding_model:
+            self.context.speak("Using Coding Model...")
+            self.switch_to_coding()
+            if self.context.engine.llm.current_model_path != self.coding_model:
+                return
 
         prompt = trigger_text
         if len(prompt.split()) < 4:
@@ -73,24 +106,37 @@ class DevSkill(BaseSkill):
         full_prompt = f"Write a complete, runnable Python script for: {prompt}. Return ONLY code."
         
         self.context.speak("Generating code...")
-        code = self.context.llm_query(full_prompt).replace("```python", "").replace("```", "").strip()
-        
-        filename = "generated_script.py"
         try:
-            with open(filename, "w") as f: f.write(code)
-            self.context.speak(f"Saved to {filename}. Say 'run code' to test it.")
-        except Exception as e:
+            code = (
+                self.context.llm_query(full_prompt)
+                .replace("```python", "")
+                .replace("```", "")
+                .strip()
+            )
+            self.generated_file.parent.mkdir(parents=True, exist_ok=True)
+            self.generated_file.write_text(code, encoding="utf-8")
+            self.context.speak(
+                f"Saved to {self.generated_file.name}. Say 'run code' to test it."
+            )
+        except LLMUnavailableError as e:
+            self.context.speak(f"Code generation is unavailable: {e}")
+        except OSError as e:
             self.context.speak(f"Save failed: {e}")
 
     def run_and_debug_session(self):
-        filename = "generated_script.py"
-        if not os.path.exists(filename):
+        if not self.generated_file.exists():
             self.context.speak("No generated script found to run.")
             return
 
         self.context.speak("Running script...")
         try:
-            result = subprocess.run(["python", filename], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                [sys.executable, str(self.generated_file)],
+                cwd=str(self.generated_file.parent),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
             
             if result.returncode == 0:
                 output = result.stdout.strip()
@@ -104,7 +150,7 @@ class DevSkill(BaseSkill):
             self.context.speak("Attempting to auto-fix the code...")
             
             # Read broken code
-            with open(filename, "r") as f: code = f.read()
+            code = self.generated_file.read_text(encoding="utf-8")
             
             # Fix Prompt
             fix_prompt = f"""
@@ -118,10 +164,17 @@ class DevSkill(BaseSkill):
             Return ONLY the fixed code. No markdown.
             """
             
-            fixed_code = self.context.llm_query(fix_prompt).replace("```python", "").replace("```", "").strip()
-            
-            with open(filename, "w") as f: f.write(fixed_code)
+            fixed_code = (
+                self.context.llm_query(fix_prompt)
+                .replace("```python", "")
+                .replace("```", "")
+                .strip()
+            )
+            self.generated_file.write_text(fixed_code, encoding="utf-8")
             self.context.speak("Applied fix. Say 'run code' to verify.")
-            
+        except subprocess.TimeoutExpired:
+            self.context.speak("Execution stopped because the script exceeded 10 seconds.")
+        except LLMUnavailableError as e:
+            self.context.speak(f"Automatic debugging is unavailable: {e}")
         except Exception as e:
             self.context.speak(f"Execution error: {e}")

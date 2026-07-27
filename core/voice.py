@@ -1,201 +1,294 @@
+"""Audio capture, speech detection, transcription, and wake-word handling."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import queue
 import threading
 import time
-import logging
-import queue
-import numpy as np
+from collections import deque
 
+from core.config import vosk_model_path
 
-sr_error = None
 try:
-    import speech_recognition as sr
-except ImportError as e:
-    sr = None
-    sr_error = e
+    import numpy as np
+except Exception as exc:
+    np = None
+    NP_ERROR = exc
+else:
+    NP_ERROR = None
 
-sd_error = None
 try:
     import sounddevice as sd
-except ImportError as e:
+except Exception as exc:
     sd = None
-    sd_error = e
+    SD_ERROR = exc
+else:
+    SD_ERROR = None
+
+try:
+    import speech_recognition as sr
+except Exception as exc:
+    sr = None
+    SR_ERROR = exc
+else:
+    SR_ERROR = None
+
+try:
+    from vosk import KaldiRecognizer, Model as VoskModel
+except Exception:
+    KaldiRecognizer = None
+    VoskModel = None
+
 
 class VoiceManager:
     def __init__(self, engine):
         self.engine = engine
-        self.recognizer = sr.Recognizer() if sr else None
-        
-        # Audio Configuration
         self.SAMPLE_RATE = 16000
-        self.BLOCK_SIZE = 4096 
+        self.BLOCK_SIZE = 4096
         self.CHANNELS = 1
-        self.DTYPE = 'int16'
-        
-        # VAD Configuration
-        self.SILENCE_THRESHOLD = 700  # Raised to avoid noise-floor triggering (was 200)
-        self.SILENCE_DURATION = 1.5   # Seconds of silence to consider command end
-        
+        self.DTYPE = "int16"
+        self.SILENCE_THRESHOLD = int(os.environ.get("VOICE_THRESHOLD", "700"))
+        self.SILENCE_DURATION = float(os.environ.get("VOICE_SILENCE_SECONDS", "1.5"))
+        self.COMMAND_TIMEOUT = float(os.environ.get("VOICE_COMMAND_TIMEOUT", "8"))
+        self.wake_word = os.environ.get("JARVIS_WAKE_WORD", "jarvis").strip().lower()
+
         self.is_listening = False
+        self.user_enabled = True
         self.stop_event = threading.Event()
         self.audio_queue = queue.Queue()
-        
-        self.wake_word = "jarvis"
+        self.stream = None
+        self.thread = None
+        self._state_lock = threading.RLock()
+        self._awaiting_command_until = 0.0
 
-        if not sd or not sr:
-            msg = "Missing: "
-            if not sd: msg += f"sounddevice ({sd_error}), "
-            if not sr: msg += f"speech_recognition ({sr_error})"
-            logging.warning(f"VoiceManager: {msg}")
-            
-            if hasattr(self.engine, 'ui'):
-                self.engine.ui.display_message(f"Voice Init Failed: {msg}", "SYSTEM")
+        self.recognizer = sr.Recognizer() if sr else None
+        self.vosk_model = None
+        self.speech_backend = "none"
+        self._configure_transcription()
+
+        missing = []
+        if not np:
+            missing.append(f"numpy ({NP_ERROR})")
+        if not sd:
+            missing.append(f"sounddevice ({SD_ERROR})")
+        if self.speech_backend == "none":
+            missing.append(
+                "a speech backend (install vosk for offline use or SpeechRecognition for Google)"
+            )
+        if missing:
+            message = "Voice disabled; missing " + ", ".join(missing)
+            logging.warning(message)
+            if hasattr(self.engine, "ui"):
+                self.engine.ui.display_message(message, "SYSTEM")
+
+    @property
+    def available(self) -> bool:
+        return bool(np is not None and sd is not None and self.speech_backend != "none")
+
+    def _configure_transcription(self):
+        requested = os.environ.get("JARVIS_SPEECH_BACKEND", "auto").strip().lower()
+        model_path = vosk_model_path()
+
+        if requested in {"auto", "vosk", "offline"} and VoskModel and model_path:
+            try:
+                self.vosk_model = VoskModel(str(model_path))
+                self.speech_backend = "vosk"
+                logging.info("Voice transcription backend: Vosk (%s)", model_path)
+                return
+            except Exception as exc:
+                logging.warning("Could not load Vosk model at %s: %s", model_path, exc)
+
+        if requested not in {"vosk", "offline"} and self.recognizer:
+            self.speech_backend = "google"
+            logging.info("Voice transcription backend: Google Speech Recognition")
 
     def start_listening(self):
-        if not sd or not sr:
-            return
-        
-        if self.is_listening:
-            return
+        self.user_enabled = True
+        if not self.available:
+            return False
 
-        self.is_listening = True
-        self.stop_event.clear()
-        
-        # Start processing thread
-        self.thread = threading.Thread(target=self._vad_loop, daemon=True)
-        self.thread.start()
-        
-        # Start Stream
-        try:
-             self.stream = sd.InputStream(samplerate=self.SAMPLE_RATE, blocksize=self.BLOCK_SIZE,
-                                    channels=self.CHANNELS, dtype=self.DTYPE,
-                                    callback=self._audio_callback)
-             self.stream.start()
-             logging.info("VoiceManager (SoundDevice): Started listening...")
-             if hasattr(self.engine, 'ui'):
-                 self.engine.ui.set_status("Voice Active (Listening...)")
-                 self.engine.ui.display_message("Voice System Online. Say 'Jarvis'...", "SYSTEM")
-        except Exception as e:
-            logging.error(f"Failed to start stream: {e}")
-            self.is_listening = False
+        with self._state_lock:
+            if self.is_listening:
+                return True
+            self._drain_audio_queue()
+            self.stop_event = threading.Event()
+            self.is_listening = True
+            self.thread = threading.Thread(
+                target=self._vad_loop,
+                args=(self.stop_event,),
+                daemon=True,
+                name="jarvis-vad",
+            )
+            self.thread.start()
+
+            try:
+                self.stream = sd.InputStream(
+                    samplerate=self.SAMPLE_RATE,
+                    blocksize=self.BLOCK_SIZE,
+                    channels=self.CHANNELS,
+                    dtype=self.DTYPE,
+                    callback=self._audio_callback,
+                )
+                self.stream.start()
+            except Exception as exc:
+                logging.error("Failed to start audio stream: %s", exc)
+                self.is_listening = False
+                self.stop_event.set()
+                self._close_stream()
+                return False
+
+        logging.info("VoiceManager started listening")
+        if hasattr(self.engine, "ui"):
+            self.engine.ui.set_status("Voice active")
+            self.engine.ui.display_message(
+                f"Voice online. Say '{self.wake_word}'.", "SYSTEM"
+            )
+        return True
 
     def pause(self):
-        """Temporarily pause listening without closing stream completely if possible, 
-           or just set a flag to ignore input."""
-        if self.is_listening:
-            logging.info("VoiceManager: Pausing...")
-            self.stop_event.set() # Stops the VAD loop
-            # We don't necessarily close the stream to keep it fast, 
-            # but for safety let's stop it.
-            if hasattr(self, 'stream'):
-                self.stream.stop()
+        with self._state_lock:
+            if not self.is_listening:
+                return
             self.is_listening = False
+            self.stop_event.set()
+            self._close_stream()
+            self._drain_audio_queue()
+        logging.debug("VoiceManager paused")
 
     def resume(self):
-        """Resume listening."""
-        logging.info("VoiceManager: Resuming...")
-        self.start_listening()
-
+        if self.user_enabled and getattr(self.engine, "running", True):
+            self.start_listening()
 
     def stop_listening(self):
-        self.is_listening = False
-        self.stop_event.set()
-        if hasattr(self, 'stream'):
-            self.stream.stop()
-            self.stream.close()
-        logging.info("VoiceManager: Stopped listening.")
+        self.user_enabled = False
+        self.pause()
+        self._awaiting_command_until = 0.0
+        logging.info("VoiceManager stopped listening")
 
-    def _audio_callback(self, indata, frames, time, status):
+    def _close_stream(self):
+        stream, self.stream = self.stream, None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+    def _drain_audio_queue(self):
+        try:
+            while True:
+                self.audio_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+    def _audio_callback(self, indata, frames, callback_time, status):
         if status:
-            logging.warning(f"VoiceManager Audio Status: {status}")
-        self.audio_queue.put(indata.copy())
+            logging.warning("VoiceManager audio status: %s", status)
+        if self.is_listening:
+            self.audio_queue.put(indata.copy())
 
-    def _vad_loop(self):
-        logging.info("VoiceManager: VAD Loop Started")
-        
+    def _vad_loop(self, stop_event):
+        logging.debug("VoiceManager VAD loop started")
         buffer = []
+        pre_roll = deque(maxlen=2)
         is_speaking = False
         silence_chunks = 0
-        
-        # Calculate chunks for silence duration
-        chunks_per_sec = self.SAMPLE_RATE / self.BLOCK_SIZE
-        silence_limit = int(self.SILENCE_DURATION * chunks_per_sec)
-        
-        while not self.stop_event.is_set():
+        chunks_per_second = self.SAMPLE_RATE / self.BLOCK_SIZE
+        silence_limit = max(1, int(self.SILENCE_DURATION * chunks_per_second))
+
+        while not stop_event.is_set():
             try:
-                chunk = self.audio_queue.get(timeout=1.0)
+                chunk = self.audio_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            
-            # Check if TTS is speaking
-            if hasattr(self.engine, 'tts') and self.engine.tts.is_speaking:
-                # Clear buffer to avoid processing system speech
+
+            if getattr(getattr(self.engine, "tts", None), "is_speaking", False):
                 buffer = []
+                pre_roll.clear()
                 is_speaking = False
                 silence_chunks = 0
                 continue
-            
-            # Energy Calculation
-            # Amplitude max is simple and fast
-            energy = np.max(np.abs(chunk))
-            
-            # Dynamic Threshold (very simple: if quiet, lower it slightly, if loud, raise it?)
-            # For now, keeping static is safer to avoid drift loops
-            
+
+            energy = int(np.max(np.abs(chunk.astype(np.int32))))
             if energy > self.SILENCE_THRESHOLD:
+                if not is_speaking:
+                    buffer = list(pre_roll)
+                    pre_roll.clear()
                 is_speaking = True
                 silence_chunks = 0
                 buffer.append(chunk)
+            elif is_speaking:
+                silence_chunks += 1
+                buffer.append(chunk)
+                if silence_chunks >= silence_limit:
+                    full_audio = np.concatenate(buffer)
+                    threading.Thread(
+                        target=self._recognize_audio,
+                        args=(full_audio,),
+                        daemon=True,
+                        name="jarvis-transcription",
+                    ).start()
+                    buffer = []
+                    is_speaking = False
+                    silence_chunks = 0
             else:
-                if is_speaking:
-                    silence_chunks += 1
-                    buffer.append(chunk)
-                    
-                    if silence_chunks > silence_limit:
-                        # End of utterance
-                        logging.info("VoiceManager: End of speech detected. Processing...")
-                        # Spawn thread to recognize so we don't block VAD
-                        full_audio = np.concatenate(buffer)
-                        threading.Thread(target=self._recognize_audio, args=(full_audio,), daemon=True).start()
-                        
-                        # Reset
-                        buffer = []
-                        is_speaking = False
-                        silence_chunks = 0
-                else:
-                    # Pre-roll buffer could go here
-                    pass
+                pre_roll.append(chunk)
 
     def _recognize_audio(self, audio_data):
         try:
-            # Create AudioData
-            audio_bytes = audio_data.tobytes()
-            source = sr.AudioData(audio_bytes, self.SAMPLE_RATE, 2)
-            
-            # Google SR
-            text = self.recognizer.recognize_google(source).lower()
-            logging.info(f"VoiceManager Heard: '{text}'")
-            
-            if self.wake_word in text:
-                logging.info("VoiceManager: Wake Word Detected")
-                self.engine.speak("Yes?")
-                if hasattr(self.engine, 'ui'):
-                    self.engine.ui.display_message("Yes? I'm listening...", "JARVIS")
-                    self.engine.ui.set_status("Listening for command...")
-                
-                # Extract command
-                parts = text.split(self.wake_word, 1)
-                if len(parts) > 1 and parts[1].strip():
-                    command = parts[1].strip()
-                    self.engine.handle_input(command)
-                    if hasattr(self.engine, 'ui'):
-                        self.engine.ui.set_status("Processing Command...")
-                    
-            elif "stop" in text and "listening" in text:
-                 self.engine.speak("Pausing voice.")
-                 self.stop_listening()
+            text = self._transcribe(audio_data)
+            if text:
+                logging.info("VoiceManager heard: %r", text)
+                self._handle_transcript(text)
+        except Exception as exc:
+            if sr and isinstance(exc, getattr(sr, "UnknownValueError", ())):
+                logging.debug("VoiceManager heard only noise")
+            else:
+                logging.error("Voice transcription failed: %s", exc)
 
-        except sr.UnknownValueError:
-            logging.debug("VoiceManager: Only noise.")
-        except sr.RequestError as e:
-            logging.error(f"VoiceManager API Error: {e}")
-        except Exception as e:
-            logging.error(f"VoiceManager Unexpected Error: {e}")
+    def _transcribe(self, audio_data) -> str:
+        audio_bytes = audio_data.tobytes()
+        if self.speech_backend == "vosk" and self.vosk_model:
+            recognizer = KaldiRecognizer(self.vosk_model, self.SAMPLE_RATE)
+            recognizer.AcceptWaveform(audio_bytes)
+            return json.loads(recognizer.FinalResult()).get("text", "").strip().lower()
+
+        if self.speech_backend == "google" and self.recognizer and sr:
+            source = sr.AudioData(audio_bytes, self.SAMPLE_RATE, 2)
+            return self.recognizer.recognize_google(source).strip().lower()
+        return ""
+
+    def _handle_transcript(self, text: str):
+        """Route a transcript. Kept separate so wake-word behavior is testable."""
+        text = text.strip().lower()
+        now = time.monotonic()
+
+        if "stop listening" in text:
+            self.engine.speak("Pausing voice.")
+            self.stop_listening()
+            return
+
+        wake_index = text.find(self.wake_word)
+        if wake_index >= 0:
+            command = text[wake_index + len(self.wake_word):].strip(" ,.!?")
+            if command:
+                self._awaiting_command_until = 0.0
+                self.engine.handle_input(command)
+                return
+
+            self._awaiting_command_until = now + self.COMMAND_TIMEOUT
+            self.engine.speak("Yes?")
+            if hasattr(self.engine, "ui"):
+                self.engine.ui.display_message("Yes? I'm listening...", "JARVIS")
+                self.engine.ui.set_status("Listening for command")
+            return
+
+        if now <= self._awaiting_command_until:
+            self._awaiting_command_until = 0.0
+            self.engine.handle_input(text)

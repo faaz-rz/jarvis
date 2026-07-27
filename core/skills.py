@@ -2,7 +2,8 @@ import os
 import importlib.util
 import logging
 import inspect
-from typing import List, Dict, Callable
+import threading
+from typing import List, Dict
 
 class SkillContext:
     """Provides skills with access to the core engine capabilities."""
@@ -14,16 +15,11 @@ class SkillContext:
         self.engine.speak(text)
         
     def listen(self) -> str:
-        # For now, just a placeholder or UI prompt if needed
-        # In a real voice loop, this would record audio
         return self.engine.ui.get_input()
 
     def ask_user(self, question: str) -> str:
         self.engine.speak(question)
-        # In a real GUI async flow, this is tricky. 
-        # For now we assume a blocking behavior or CLI/callback flow.
-        # But since our engine is async-ish, returning values is hard.
-        return ""  # Placeholder
+        return self.listen()
         
     def llm_query(self, prompt: str) -> str:
         return self.engine.llm.generate(prompt)
@@ -36,6 +32,7 @@ class BaseSkill:
     """Abstract base class for all skills."""
     name: str = "BaseSkill"
     description: str = "Base description"
+    priority: int = 0
 
     def __init__(self, context: SkillContext):
         self.context = context
@@ -51,22 +48,29 @@ class SkillManager:
     def __init__(self, context: SkillContext):
         self.context = context
         self.skills: List[BaseSkill] = []
+        self.load_errors: Dict[str, str] = {}
+        self._process_lock = threading.RLock()
         self.skills_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'skills')
 
     def load_skills(self):
         self.skills = []
+        self.load_errors = {}
         if not os.path.exists(self.skills_dir):
             os.makedirs(self.skills_dir)
             
-        for filename in os.listdir(self.skills_dir):
+        for filename in sorted(os.listdir(self.skills_dir)):
             if filename.endswith('.py') and not filename.startswith('__'):
                 self._load_skill_file(os.path.join(self.skills_dir, filename))
-        
+
+        self.skills.sort(key=lambda skill: (-skill.priority, skill.name.lower()))
         logging.info(f"Loaded {len(self.skills)} skills.")
 
     def _load_skill_file(self, filepath):
         try:
-            spec = importlib.util.spec_from_file_location("skill_module", filepath)
+            module_name = f"jarvis_skill_{os.path.splitext(os.path.basename(filepath))[0]}"
+            spec = importlib.util.spec_from_file_location(module_name, filepath)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Could not create import specification for {filepath}")
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
@@ -77,16 +81,24 @@ class SkillManager:
                     self.skills.append(skill_instance)
                     logging.info(f"Registered skill: {skill_instance.name}")
         except Exception as e:
+            self.load_errors[os.path.basename(filepath)] = str(e)
             logging.error(f"Failed to load skill from {filepath}: {e}")
 
     def process(self, text: str) -> bool:
         """Iterate through skills to see if one wants to handle the input."""
-        for skill in self.skills:
-            try:
-                if skill.handle(text):
+        with self._process_lock:
+            for skill in self.skills:
+                try:
+                    if skill.handle(text):
+                        logging.info("Request handled by skill: %s", skill.name)
+                        return True
+                except Exception as e:
+                    logging.exception(f"Error in skill {skill.name}: {e}")
+                    self.context.speak(
+                        f"I encountered an error while executing {skill.name}."
+                    )
                     return True
-            except Exception as e:
-                logging.error(f"Error in skill {skill.name}: {e}")
-                self.context.speak(f"I encountered an error while executing {skill.name}.")
-                return True # We caught it, so it's 'handled' in a way
         return False
+
+    def help_text(self) -> str:
+        return "\n".join(f"- {skill.help()}" for skill in self.skills)

@@ -4,7 +4,6 @@ __pycache__/
 
 # Logs
 *.log
-*.txt
 debug_log_cuda.txt
 verify_log.txt
 
@@ -13,3 +12,7 @@ verify_*.py
 diagnose_*.py
 check_gpu.py
 test_import.py
+generated_script.py
+*.tmp
+*.gguf
+.DS_Store

@@ -1,4 +1,6 @@
 import abc
+import os
+import platform
 import threading
 import queue
 import logging
@@ -21,6 +23,10 @@ class BaseUI(abc.ABC):
     def start(self):
         pass
 
+    def stop(self):
+        """Stop the UI event loop."""
+        pass
+
 class ConsoleUI(BaseUI):
     def display_message(self, text: str, sender: str = "JARVIS"):
         print(f"\n[{sender}]: {text}")
@@ -39,6 +45,9 @@ class ConsoleUI(BaseUI):
         # CLI doesn't need a mainloop setup
         pass
 
+    def stop(self):
+        pass
+
 # Try importing Tkinter
 try:
     import tkinter as tk
@@ -51,17 +60,14 @@ class TkinterUI(BaseUI):
     def __init__(self, callback_handler):
         if not HAS_TK:
             raise ImportError("Tkinter not available")
-        self.callback_handler = callback_handler # Function to call when user sends message
-        self.root = None
-        self.chat_area = None
-        self.entry = None
-        self.status_var = None
-        
-        # Queue for thread-safe UI updates
-        self.msg_queue = queue.Queue()
-        self.ready_event = threading.Event()
+        if (
+            platform.system() not in {"Windows", "Darwin"}
+            and not os.environ.get("DISPLAY")
+        ):
+            raise RuntimeError("No graphical display is available")
 
-    def _setup_window(self):
+        self.callback_handler = callback_handler
+        self.msg_queue = queue.Queue()
         self.root = tk.Tk()
         self.root.title("J.A.R.V.I.S - Advanced System")
         self.root.geometry("900x600")
@@ -125,10 +131,13 @@ class TkinterUI(BaseUI):
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._process_queue)
-        self.ready_event.set()
-        self.root.mainloop()
 
     def _process_queue(self):
+        try:
+            if not self.root.winfo_exists():
+                return
+        except tk.TclError:
+            return
         try:
             while True:
                 msg_type, content = self.msg_queue.get_nowait()
@@ -149,7 +158,10 @@ class TkinterUI(BaseUI):
         except queue.Empty:
             pass
         finally:
-            self.root.after(100, self._process_queue)
+            try:
+                self.root.after(100, self._process_queue)
+            except tk.TclError:
+                pass
 
     def _on_enter(self, event):
         self._on_send()
@@ -158,11 +170,20 @@ class TkinterUI(BaseUI):
         text = self.entry.get().strip()
         if text:
             self.entry.delete(0, tk.END)
-            self.callback_handler(text)
+            # Skills such as OCR and model inference must not block Tk's event loop.
+            threading.Thread(
+                target=self.callback_handler,
+                args=(text,),
+                daemon=True,
+                name="jarvis-ui-command",
+            ).start()
 
     def _on_close(self):
         self.callback_handler("exit")
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     def display_message(self, text: str, sender: str = "JARVIS"):
         self.msg_queue.put(("msg", (sender, text)))
@@ -175,6 +196,10 @@ class TkinterUI(BaseUI):
         return ""
 
     def start(self):
-        t = threading.Thread(target=self._setup_window, daemon=False)
-        t.start()
-        self.ready_event.wait()
+        self.root.mainloop()
+
+    def stop(self):
+        try:
+            self.root.after(0, self.root.quit)
+        except (tk.TclError, RuntimeError):
+            pass

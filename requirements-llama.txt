@@ -1,0 +1,2 @@
+# Optional direct-GGUF backend. The default Qwen/Ollama backend does not need this.
+llama-cpp-python>=0.2.90

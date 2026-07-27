@@ -5,18 +5,24 @@ import time
 
 try:
     import pyttsx3
-    import pythoncom
 except ImportError:
     pyttsx3 = None
+
+try:
+    import pythoncom
+except ImportError:
     pythoncom = None
 
+
 class TTSManager:
-    def __init__(self):
+    def __init__(self, on_start=None, on_end=None):
         self.queue = queue.Queue()
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.running = True
         self.engine = None
         self.is_speaking = False
+        self.on_start = on_start
+        self.on_end = on_end
         
         if pyttsx3:
             self.thread.start()
@@ -24,13 +30,15 @@ class TTSManager:
             logging.warning("TTSManager: pyttsx3 not installed. Speech disabled.")
 
     def speak(self, text):
-        if not text:
+        if not text or not self.running or not pyttsx3:
             return
-        # Clean text (remove code blocks, etc. if needed)
-        self.queue.put(text)
+        self.queue.put(str(text))
+
+    def set_callbacks(self, on_start=None, on_end=None):
+        self.on_start = on_start
+        self.on_end = on_end
 
     def _worker(self):
-        # Initialize engine ONLY in the worker thread
         try:
             if pythoncom:
                 pythoncom.CoInitialize()
@@ -44,33 +52,55 @@ class TTSManager:
                     break
         except Exception as e:
             logging.error(f"TTSManager Init Error: {e}")
+            self.running = False
             return
 
         logging.info("TTSManager: Worker started.")
         
-        while self.running:
+        while True:
             try:
-                # Get text, wait max 1 sec to check running flag
-                text = self.queue.get(timeout=1.0)
-                
+                text = self.queue.get()
+                if text is None:
+                    self.queue.task_done()
+                    break
+
                 logging.info(f"TTSManager Speaking: {text[:50]}...")
-                
                 self.is_speaking = True
+                if self.on_start:
+                    self.on_start()
                 self.engine.say(text)
-                logging.debug("TTSManager: runAndWait starting...")
                 self.engine.runAndWait()
-                logging.debug("TTSManager: runAndWait finished.")
-                self.is_speaking = False
-                
-                self.queue.task_done()
-            except queue.Empty:
-                continue
             except Exception as e:
                 logging.error(f"TTSManager Error: {e}")
                 time.sleep(1)
+            finally:
+                if "text" in locals() and text is not None:
+                    self.is_speaking = False
+                    if self.on_end:
+                        try:
+                            self.on_end()
+                        except Exception as e:
+                            logging.debug(f"TTS end callback failed: {e}")
+                    self.queue.task_done()
 
-    def stop(self):
+        self.is_speaking = False
+        if pythoncom:
+            pythoncom.CoUninitialize()
+
+    def stop(self, drain=True):
+        if not self.running:
+            return
         self.running = False
-        if self.thread.is_alive():
-            self.thread.join(timeout=1.0)
-        # pyttsx3 cleanup if needed (runAndWait handles dispatch)
+        if not pyttsx3:
+            return
+
+        if not drain:
+            try:
+                while True:
+                    self.queue.get_nowait()
+                    self.queue.task_done()
+            except queue.Empty:
+                pass
+        self.queue.put(None)
+        if self.thread.is_alive() and threading.current_thread() is not self.thread:
+            self.thread.join(timeout=5.0)

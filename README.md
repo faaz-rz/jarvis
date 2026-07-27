@@ -1,146 +1,234 @@
-
 # JARVIS
 
-An intelligent personal assistant system built with Python, featuring voice interaction, machine learning capabilities, and extensible skill modules.
+JARVIS is a modular local personal assistant written in Python. It combines typed
+and spoken interaction, deterministic desktop skills, persistent memory, and the
+local `qwen3.5:4b` model served by Ollama.
 
-## Overview
-
-JARVIS is a modular AI assistant that learns from user interactions and adapts over time. It maintains memory of past interactions, supports voice commands, and can perform various tasks through its extensible skill system.
+The assistant remains usable in text mode when audio, OCR, web research, or the
+local model is unavailable. Optional capabilities report their own setup problem
+instead of preventing the application from starting.
 
 ## Features
 
-- 🎙️ **Voice Interaction** - Speak with your assistant naturally
-- 🧠 **Machine Learning** - Learns and improves from user interactions over time
-- 💾 **Persistent Memory** - Maintains context across sessions using JSON-based memory storage
-- 🔧 **Extensible Skills** - Easy-to-add skill modules for new capabilities
-- 🎯 **Task Automation** - Automate common tasks through the skills system
+- Tkinter chat interface with an automatic console fallback
+- Text-to-speech through `pyttsx3`
+- Wake-word voice commands with one-step and two-step interaction
+- Offline speech recognition through the bundled Vosk English model
+- Optional Google speech-recognition fallback
+- Local Qwen inference through Ollama, with optional direct-GGUF support
+- JSON memory with atomic, thread-safe persistence
+- Dynamically discovered skills with deterministic priorities
+- Application launch, system status, screenshots, search, research, and OCR
+- Custom learned commands
+- Confirmations and safety limits for power and automation actions
 
-## Repository Structure
+## Architecture
 
+```text
+Microphone ──> VAD ──> Vosk/Google ─┐
+                                    ├─> JarvisEngine
+Text UI ─────────────────────────────┘        │
+                                             ├─> learned command lookup
+                                             ├─> prioritized skills
+                                             ├─> memory heuristics
+                                             └─> local LLM fallback
+                                                      │
+                                      UI <── response ─┴─> TTS
+                                                      │
+                                                 JSON memory
 ```
-jarvis/
-├── core/                      # Core assistant logic
-├── skills/                    # Extensible skill modules
-├── Vm/                       # Virtual Machine components
-├── jarvis.py                 # Main entry point
-├── utils.py                  # Utility functions
-├── jarvis_memory.json        # Persistent memory storage
-├── jarvis_learning.pkl       # ML model (v1)
-├── jarvis_learning_v2.pkl    # ML model (v2)
-├── repair_jarvis.bat         # Windows repair script
-└── .gitignore
+
+The important modules are:
+
+- `jarvis.py`: command-line entry point and Windows CUDA path setup
+- `core/engine.py`: request routing and application lifecycle
+- `core/llm.py`: Qwen/Ollama and optional llama.cpp inference
+- `core/memory.py`: preferences, learned commands, and conversation history
+- `core/skills.py`: skill interface, discovery, ordering, and isolation
+- `core/voice.py`: audio capture, VAD, transcription, and wake-word state
+- `core/tts.py`: queued text-to-speech worker
+- `core/ui.py`: console and Tkinter interfaces
+- `skills/`: independently loadable assistant capabilities
+
+## Requirements
+
+Python 3.11 or 3.12 is recommended. Python 3.9+ supports text mode, but binary
+audio and model packages may not publish wheels for every Python version.
+
+External programs used by optional features:
+
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) for screen reading
+- [Ollama](https://ollama.com/) with `qwen3.5:4b` for language responses
+
+This machine already has `qwen3.5:4b`, `qwen3:8b`, and `qwen3:14b` installed.
+
+## Installation
+
+### Windows
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-## Key Components
+Make sure Ollama is running, then start JARVIS with `python jarvis.py`.
 
-### Main Files
+### macOS or Linux
 
-- **jarvis.py** - Core assistant implementation and main entry point
-- **utils.py** - Helper functions and utilities
-- **jarvis_memory.json** - Stores conversation history and learned preferences
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python jarvis.py
+```
 
-### Machine Learning
+Some systems require PortAudio before `sounddevice` can be installed. Tkinter may
+also be a separate operating-system package on Linux.
 
-The system includes two versions of learning models:
-- `jarvis_learning.pkl` - Version 1 of the ML model
-- `jarvis_learning_v2.pkl` - Version 2 with improvements
+## Running without optional features
 
-### Directories
+The built-in skills and console interface do not require a language model:
 
-- **core/** - Core functionality and algorithms
-- **skills/** - Modular skill implementations
-- **Vm/** - Virtual Machine components for task execution
+```bash
+python jarvis.py --console --no-voice
+```
 
-## Getting Started
+Useful options:
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/faaz-rz/jarvis.git
-   cd jarvis
-   ```
+```text
+--console          use the terminal instead of Tkinter
+--no-voice         disable microphone input
+--backend NAME     auto, ollama, or llama_cpp
+--ollama-model ID  select an installed Ollama model
+--model PATH       use a direct GGUF model with llama.cpp
+--memory PATH      use this JSON memory file
+--log-level LEVEL  DEBUG, INFO, WARNING, or ERROR
+```
 
-2. Install dependencies (if a requirements.txt exists):
-   ```bash
-   pip install -r requirements.txt
-   ```
+Run `python jarvis.py --help` for the authoritative list.
 
-3. Run the assistant:
-   ```bash
-   python jarvis.py
-   ```
+## Configuration
 
-## Usage
+`config.example.env` documents all supported environment variables. The most
+important ones are:
 
-Interact with JARVIS through voice commands or text input. The system will:
-- Understand and process your requests
-- Execute relevant skills
-- Learn from your preferences
-- Remember context across sessions
+| Variable | Purpose |
+|---|---|
+| `JARVIS_LLM_BACKEND` | `ollama` by default; optional `llama_cpp` |
+| `OLLAMA_MODEL` | Ollama model; defaults to `qwen3.5:4b` |
+| `OLLAMA_HOST` | Ollama API address |
+| `MISTRAL_MODEL_PATH` | Optional direct-GGUF model |
+| `CODE_MODEL_PATH` | Optional GGUF coding model |
+| `JARVIS_MEMORY_PATH` | Memory JSON location |
+| `JARVIS_SPEECH_BACKEND` | `auto`, `vosk`, `offline`, or `google` |
+| `VOSK_MODEL_PATH` | Offline speech model; defaults to `Vm` |
+| `JARVIS_AUTOMATION_ROOT` | Directory automation is allowed to modify |
+| `TESSERACT_PATH` | Tesseract executable when it is not on `PATH` |
+| `LLM_N_GPU_LAYERS` | Model layers offloaded to the GPU |
 
-## Memory System
+Environment variables are read directly by the application. The example file is
+documentation; it is not automatically loaded.
 
-JARVIS maintains a `jarvis_memory.json` file that stores:
-- Conversation history
-- User preferences
-- Learned patterns
-- Session data
+## Voice interaction
 
-This allows the system to provide personalized responses and improve over time.
+Both forms are supported:
 
-## Skills System
+```text
+"Jarvis, open calculator"
+```
 
-The `skills/` directory contains modular components that extend JARVIS's capabilities. Add new skills by creating new modules in this directory following the established patterns.
+or:
+
+```text
+User:   "Jarvis"
+JARVIS: "Yes?"
+User:   "Open calculator"
+```
+
+In `auto` mode, JARVIS prefers the bundled Vosk model when the `vosk` package is
+installed. It otherwise uses Google through `SpeechRecognition`, which requires
+an internet connection.
+
+## Example commands
+
+```text
+open calculator
+what is my battery level
+take a screenshot
+search for Python dataclasses
+research retrieval augmented generation
+read my screen
+my name is Ada
+what is my name
+remember that my meeting is at four
+Learn: when I say focus mode do open notepad
+create folder demo
+shutdown pc
+```
+
+File creation and power actions require confirmation. Automated files are
+restricted to `JARVIS_AUTOMATION_ROOT`. PowerShell accepts only a small allowlist
+and rejects command chaining and destructive verbs.
+
+## Adding a skill
+
+Create a module in `skills/` with a subclass of `BaseSkill`:
+
+```python
+from core.skills import BaseSkill
+
+
+class WeatherSkill(BaseSkill):
+    name = "Weather"
+    description = "Reports local weather."
+    priority = 50
+
+    def handle(self, text: str) -> bool:
+        if "weather" not in text.lower():
+            return False
+        self.context.speak("Weather integration is ready.")
+        return True
+```
+
+Higher-priority skills run first. A skill returns `True` only when it has handled
+the request. Import and runtime failures are logged without crashing other skills.
+
+## Tests
+
+The test suite covers memory persistence and concurrency, skill discovery and
+ordering, confirmation behavior, wake-word routing, engine fallbacks, and clean
+shutdown:
+
+```bash
+python -m unittest discover -v
+```
+
+## Privacy and security
+
+- Qwen through Ollama and Vosk speech recognition run locally.
+- Google speech recognition is online; select `offline` to forbid that fallback.
+- Screen OCR and conversation history can contain sensitive data.
+- `jarvis_memory.json` is plain JSON. Protect or relocate it on shared machines.
+- Generated code is executed only after the explicit `run code` request, but it
+  should still be reviewed before use.
+
+The legacy `jarvis_learning.pkl` files are retained only for compatibility with
+older experiments. They are not trained models and are not used by the current
+application.
 
 ## Troubleshooting
 
-On Windows, if you encounter issues, run:
-```bash
-repair_jarvis.bat
-```
+Logs are written to `jarvis_system.log`.
 
-This script helps resolve common problems and restore functionality.
-
-## Development
-
-### Project Structure
-
-- Core logic is contained in the `core/` directory
-- Each skill is a self-contained module in `skills/`
-- Utilities are centralized in `utils.py`
-
-### Adding New Skills
-
-1. Create a new skill file in the `skills/` directory
-2. Implement the required interface
-3. Register the skill in the core module
-4. Test your implementation
-
-## License
-
-[Check repository for license information]
-
-## Contributing
-
-Contributions are welcome! Please ensure your code follows the project structure and includes proper documentation.
-
-## Notes
-
-- JARVIS learns from interactions stored in the memory file
-- Models are periodically updated (v1 and v2 available)
-- The system is designed to be modular and easily extensible
-
----
-
-For more information, visit: [https://github.com/faaz-rz/jarvis](https://github.com/faaz-rz/jarvis)
-```
-
-This README provides:
-- Clear overview of what JARVIS does
-- Directory structure explanation
-- Getting started instructions
-- Usage information
-- Memory and learning system details
-- Troubleshooting tips
-- Development guidelines
-
-Feel free to customize it further based on specific implementation details or additional features you'd like to highlight!
+- If Qwen does not respond, run `ollama list`, start Ollama, and verify
+  `qwen3.5:4b` is installed.
+- For direct GGUF inference, install `requirements-llama.txt`, set
+  `JARVIS_LLM_BACKEND=llama_cpp`, and configure `MISTRAL_MODEL_PATH`.
+- If CUDA DLL loading fails on Windows, use `repair_jarvis.bat` to reinstall the
+  CPU version of `llama-cpp-python`.
+- If voice is unavailable, run `python debug_voice.py` and check microphone
+  permission and PortAudio installation.
+- If OCR fails, install Tesseract and set `TESSERACT_PATH`.

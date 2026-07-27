@@ -5,6 +5,7 @@ import time
 class SmallTalkSkill(BaseSkill):
     name = "SmallTalk"
     description = "Handles basic conversation when LLM is offline."
+    priority = 20
 
     def __init__(self, context):
         super().__init__(context)
@@ -37,23 +38,22 @@ class SmallTalkSkill(BaseSkill):
             if clean_text == key:
                 response = random.choice(replies)
                 self.context.speak(response)
-                self.context.memory.add_history_item("user", text)
-                self.context.memory.add_history_item("assistant", response)
+                self.context.memory.add_exchange(text, response)
                 return True
             
             # Substring match for longer phrases (avoid matching "hi" in "history")
             if len(key) > 3 and key in clean_text:
                 response = random.choice(replies)
                 self.context.speak(response)
-                # We need to manually add to history since we bypassing engine LLM logic
-                self.context.memory.add_history_item("user", text)
-                self.context.memory.add_history_item("assistant", response)
+                self.context.memory.add_exchange(text, response)
                 return True
                 
         # Time/Date checks (Engine fallback covers this, but Skill is faster)
         if "what time" in clean_text or "current time" in clean_text:
              t = time.strftime('%I:%M %p')
-             self.context.speak(f"It is {t}.")
+             response = f"It is {t}."
+             self.context.speak(response)
+             self.context.memory.add_exchange(text, response)
              return True
              
         return False
