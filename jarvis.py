@@ -49,6 +49,11 @@ def parse_args(argv=None):
         action="store_true",
         help="Disable microphone input while keeping typed input and TTS.",
     )
+    parser.add_argument(
+        "--no-long-term-memory",
+        action="store_true",
+        help="Disable SQLite conversational and semantic memory for this run.",
+    )
     parser.add_argument("--model", help="Path to a local GGUF model for llama.cpp.")
     parser.add_argument(
         "--backend",
@@ -88,6 +93,7 @@ def main(argv=None):
             ),
             enable_voice=not args.no_voice,
             prefer_gui=not args.console,
+            enable_long_term_memory=not args.no_long_term_memory,
         )
         engine.start()
         return 0

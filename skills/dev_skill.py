@@ -10,7 +10,7 @@ from core.skills import BaseSkill
 
 class DevSkill(BaseSkill):
     name = "DevMode"
-    description = "Generates and saves code using CodeLlama."
+    description = "Generates and saves code using Qwen or an optional coding model."
     priority = 80
 
     def __init__(self, context):
@@ -47,7 +47,8 @@ class DevSkill(BaseSkill):
     def switch_to_coding(self):
         if not self.coding_model:
             self.context.speak(
-                "Coding mode is not configured. Set CODE_MODEL_PATH to a GGUF coding model."
+                f"Coding assistance will use the active "
+                f"{self.context.engine.llm.model_name} model."
             )
             return
 
@@ -56,10 +57,10 @@ class DevSkill(BaseSkill):
             self.context.speak("I am already in Coding Mode.")
             return
 
-        self.context.speak("Switching to CodeLlama model. This may take a moment...")
+        self.context.speak("Switching to the configured coding model...")
         success = self.context.engine.llm.reload_model(self.coding_model)
         if success:
-            self.context.speak("Coding Mode Enabled. Initialized CodeLlama 7B.")
+            self.context.speak("Coding mode enabled.")
         else:
             self.context.speak("Failed to load the coding model. Reverting to default.")
             if hasattr(self.context.engine.llm, "reload_default_model"):
@@ -86,13 +87,12 @@ class DevSkill(BaseSkill):
             self.context.speak("The standard model is not configured.")
 
     def start_dev_session(self, trigger_text):
-        if not self.coding_model:
-            self.context.speak(
-                "Coding mode is not configured. Set CODE_MODEL_PATH to a GGUF coding model."
-            )
-            return
-        # Auto-switch
-        if self.context.engine.llm.current_model_path != self.coding_model:
+        # Use an explicitly configured coding GGUF when present. Otherwise the
+        # active Ollama Qwen model is already capable of code generation.
+        if (
+            self.coding_model
+            and self.context.engine.llm.current_model_path != self.coding_model
+        ):
             self.context.speak("Using Coding Model...")
             self.switch_to_coding()
             if self.context.engine.llm.current_model_path != self.coding_model:

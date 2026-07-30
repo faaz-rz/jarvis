@@ -45,7 +45,21 @@ def default_memory_path() -> Path:
     return configured_path("JARVIS_MEMORY_PATH", PROJECT_ROOT / "jarvis_memory.json")
 
 
+def default_database_path(memory_path=None) -> Path:
+    configured = configured_path("JARVIS_DB_PATH")
+    if configured:
+        return configured
+    if memory_path:
+        return Path(memory_path).with_suffix(".db")
+    return PROJECT_ROOT / "jarvis_memory.db"
+
+
 def default_model_path() -> Optional[Path]:
+    configured = configured_path("JARVIS_GGUF_MODEL_PATH")
+    if configured:
+        return configured
+
+    # Backward-compatible alias used by the original project.
     configured = configured_path("MISTRAL_MODEL_PATH")
     if configured:
         return configured

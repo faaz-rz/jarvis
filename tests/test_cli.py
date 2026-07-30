@@ -19,6 +19,7 @@ class CLITests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--no-voice", result.stdout)
+        self.assertIn("--no-long-term-memory", result.stdout)
         self.assertIn("--ollama-model", result.stdout)
 
     def test_console_mode_starts_handles_input_and_stops(self):

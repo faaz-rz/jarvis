@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import logging
 from core.skills import BaseSkill
+from core.tools import RiskLevel, ToolSpec
 
 
 class AppControlSkill(BaseSkill):
@@ -45,19 +46,50 @@ class AppControlSkill(BaseSkill):
     def handle(self, text: str) -> bool:
         lower = text.lower()
         if "open" in lower:
-            for app, command in self.common_apps.items():
+            for app in self.common_apps:
                 if app in lower:
-                    self.open_app(app, command)
+                    self.context.speak(self.launch_application(app))
                     return True
             parts = lower.split("open ", 1)
             if len(parts) > 1:
                 target = parts[1].strip()
-                self.open_generic(target)
+                self.context.speak(self.launch_application(target))
                 return True
         return False
 
-    def open_app(self, name, command):
-        self.context.speak(f"Opening {name}")
+    def tools(self):
+        return [
+            ToolSpec(
+                name="open_application",
+                description=(
+                    "Open a desktop application. Use only when the user asks to "
+                    "launch or open an application."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "application": {
+                            "type": "string",
+                            "maxLength": 100,
+                            "description": "Application name, such as calculator or chrome.",
+                        }
+                    },
+                    "required": ["application"],
+                    "additionalProperties": False,
+                },
+                handler=self.launch_application,
+                risk=RiskLevel.ACTION,
+            )
+        ]
+
+    def launch_application(self, application):
+        name = application.strip().lower()
+        command = self.common_apps.get(name)
+        if command:
+            return self._open_known_app(name, command)
+        return self._open_generic(name)
+
+    def _open_known_app(self, name, command):
         try:
             executable = command[0]
             if os.path.isabs(executable) and not os.path.exists(executable):
@@ -65,12 +97,12 @@ class AppControlSkill(BaseSkill):
             if not os.path.isabs(executable) and not shutil.which(executable):
                 raise FileNotFoundError(executable)
             subprocess.Popen(command)
+            return f"Opened {name}."
         except (OSError, ValueError) as e:
             logging.error("Failed to open %s: %s", name, e)
-            self.context.speak(f"Failed to open {name}. {e}")
+            return f"Failed to open {name}: {e}"
 
-    def open_generic(self, target):
-        self.context.speak(f"Attempting to launch {target}")
+    def _open_generic(self, target):
         try:
             system = platform.system()
             if system == "Windows":
@@ -82,5 +114,6 @@ class AppControlSkill(BaseSkill):
                 if not executable:
                     raise FileNotFoundError(target)
                 subprocess.Popen([executable, *shlex.split(target)[1:]])
-        except (OSError, ValueError):
-            self.context.speak(f"Could not find or launch {target}")
+            return f"Opened {target}."
+        except (OSError, ValueError) as exc:
+            return f"Could not find or launch {target}: {exc}"

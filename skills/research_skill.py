@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from core.llm import LLMUnavailableError
 from core.skills import BaseSkill
+from core.tools import RiskLevel, ToolSpec
 
 try:
     from ddgs import DDGS
@@ -40,7 +41,7 @@ class ResearchSkill(BaseSkill):
                     )
                     return True
                 threading.Thread(
-                    target=self.perform_research,
+                    target=self._perform_research_and_speak,
                     args=(query,),
                     daemon=True,
                     name="jarvis-research",
@@ -48,14 +49,50 @@ class ResearchSkill(BaseSkill):
                 return True
         return False
 
-    def perform_research(self, query):
+    def tools(self):
+        return [
+            ToolSpec(
+                name="research_web",
+                description=(
+                    "Search the web, read a small set of results, and return a sourced "
+                    "summary. Use when the user explicitly asks for research or current "
+                    "information, not for timeless general knowledge."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "maxLength": 500,
+                            "description": "Focused web research query.",
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+                handler=self.perform_research,
+                risk=RiskLevel.READ_ONLY,
+            )
+        ]
+
+    def _perform_research_and_speak(self, query):
         self.context.speak(f"Researching {query} on the web.")
+        try:
+            self.context.speak(self.perform_research(query))
+        except Exception as exc:
+            logging.exception("Research error: %s", exc)
+            self.context.speak("I had trouble completing that web research.")
+
+    def perform_research(self, query):
+        if DDGS is None:
+            raise RuntimeError(
+                "Web research requires the ddgs package."
+            )
         try:
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=3))
             if not results:
-                self.context.speak(f"I couldn't find information about {query}.")
-                return
+                return f"No web results were found for {query}."
 
             sections = []
             for result in results:
@@ -88,14 +125,14 @@ class ResearchSkill(BaseSkill):
                 for result in results
             )
             response = f"{summary}\n\nSources:\n{sources}"
-            self.context.speak(response)
 
             safe_key = re.sub(r"[^a-z0-9_]+", "_", query.lower()).strip("_")[:60]
             if safe_key:
                 self.context.memory.set_preference(f"knowledge_{safe_key}", response)
+            return response
         except Exception as exc:
             logging.exception("Research error: %s", exc)
-            self.context.speak("I had trouble completing that web research.")
+            raise RuntimeError(f"Web research failed: {exc}") from exc
 
     def _extract_page_text(self, url):
         if not requests or not BeautifulSoup:

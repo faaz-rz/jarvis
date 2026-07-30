@@ -148,7 +148,8 @@ class LLMEngine:
 
         if not self.model_path:
             self.last_error = (
-                "No GGUF model is configured. Set MISTRAL_MODEL_PATH or use Ollama."
+                "No GGUF model is configured. Set JARVIS_GGUF_MODEL_PATH "
+                "or use Ollama."
             )
             logging.error(self.last_error)
             return False
@@ -199,14 +200,27 @@ class LLMEngine:
 
     def generate(self, prompt: str, stop=None, max_tokens=1024) -> str:
         """Generate a response using Ollama or llama.cpp."""
+        if self.backend == "ollama":
+            messages = [
+                {"role": role, "content": content.strip()}
+                for role, content in self.CHATML_PATTERN.findall(prompt)
+            ]
+            if not messages:
+                messages = [{"role": "user", "content": prompt.strip()}]
+            result = self.chat(messages, max_tokens=max_tokens)
+            content = result.get("message", {}).get("content", "").strip()
+            if not content:
+                raise LLMUnavailableError(
+                    f"Ollama model '{self.ollama_model}' returned an empty response."
+                )
+            return content
+
         if not self.loaded and not self.load_model():
             raise LLMUnavailableError(
                 self.last_error or "The local model is unavailable."
             )
 
         with self.lock:
-            if self.backend == "ollama":
-                return self._generate_ollama(prompt, max_tokens=max_tokens)
             try:
                 output = self.model(
                     prompt,
@@ -220,18 +234,31 @@ class LLMEngine:
                 logging.error(self.last_error)
                 raise LLMUnavailableError(self.last_error) from exc
 
-    def _generate_ollama(self, prompt: str, max_tokens: int) -> str:
-        messages = [
-            {"role": role, "content": content.strip()}
-            for role, content in self.CHATML_PATTERN.findall(prompt)
-        ]
-        if not messages:
-            messages = [{"role": "user", "content": prompt.strip()}]
+    def chat(
+        self,
+        messages,
+        tools=None,
+        max_tokens=1024,
+        stream_callback=None,
+        cancel_event=None,
+        format_schema=None,
+    ):
+        """Return a normalized chat response with optional tools and streaming."""
+        if not self.loaded and not self.load_model():
+            raise LLMUnavailableError(
+                self.last_error or "The local model is unavailable."
+            )
+        if self.backend != "ollama":
+            prompt = self._messages_to_chatml(messages)
+            content = self.generate(prompt, max_tokens=max_tokens)
+            if stream_callback:
+                stream_callback(content)
+            return {"message": {"role": "assistant", "content": content}}
 
         payload = {
             "model": self.ollama_model,
             "messages": messages,
-            "stream": False,
+            "stream": bool(stream_callback),
             "think": env_bool("OLLAMA_THINK", False),
             "keep_alive": os.environ.get("OLLAMA_KEEP_ALIVE", "10m"),
             "options": {
@@ -240,17 +267,129 @@ class LLMEngine:
                 "temperature": env_float("OLLAMA_TEMPERATURE", 0.4),
             },
         }
+        if tools:
+            payload["tools"] = tools
+        if format_schema:
+            payload["format"] = format_schema
+
+        timeout = env_int("OLLAMA_TIMEOUT_SECONDS", 300)
+        with self.lock:
+            if stream_callback:
+                return self._ollama_stream_request(
+                    "/api/chat",
+                    payload,
+                    stream_callback,
+                    cancel_event,
+                    timeout,
+                )
+            return self._ollama_request("/api/chat", payload, timeout=timeout)
+
+    def embed(self, texts, model=None):
+        """Create normalized embeddings through the local Ollama server."""
+        single = isinstance(texts, str)
+        inputs = [texts] if single else list(texts)
+        if not inputs:
+            return [] if not single else None
         result = self._ollama_request(
-            "/api/chat",
-            payload,
+            "/api/embed",
+            {
+                "model": model or os.environ.get(
+                    "OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"
+                ),
+                "input": inputs,
+                "truncate": True,
+                "keep_alive": os.environ.get("OLLAMA_KEEP_ALIVE", "10m"),
+            },
             timeout=env_int("OLLAMA_TIMEOUT_SECONDS", 300),
+        )
+        embeddings = result.get("embeddings", [])
+        if len(embeddings) != len(inputs):
+            raise LLMUnavailableError("Ollama returned an unexpected embedding result.")
+        return embeddings[0] if single else embeddings
+
+    def analyze_image(self, image_bytes: bytes, prompt: str) -> str:
+        """Analyze an image with an Ollama vision-capable model."""
+        if self.backend != "ollama":
+            raise LLMUnavailableError("Direct image analysis requires the Ollama backend.")
+        import base64
+
+        result = self.chat(
+            [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [base64.b64encode(image_bytes).decode("ascii")],
+                }
+            ],
+            max_tokens=800,
         )
         content = result.get("message", {}).get("content", "").strip()
         if not content:
-            raise LLMUnavailableError(
-                f"Ollama model '{self.ollama_model}' returned an empty response."
-            )
+            raise LLMUnavailableError("The vision model returned an empty response.")
         return content
+
+    @staticmethod
+    def _messages_to_chatml(messages):
+        parts = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            parts.append(f"<|im_start|>{role}\n{content}\n<|im_end|>")
+        parts.append("<|im_start|>assistant\n")
+        return "\n".join(parts)
+
+    def _ollama_stream_request(
+        self, endpoint, payload, stream_callback, cancel_event, timeout
+    ):
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib_request.Request(
+            f"{self.ollama_host}{endpoint}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        content_parts = []
+        thinking_parts = []
+        tool_calls = []
+        cancelled = False
+        try:
+            with urllib_request.urlopen(request, timeout=timeout) as response:
+                for raw_line in response:
+                    if cancel_event and cancel_event.is_set():
+                        cancelled = True
+                        break
+                    if not raw_line.strip():
+                        continue
+                    chunk = json.loads(raw_line.decode("utf-8"))
+                    message = chunk.get("message", {})
+                    content = message.get("content", "")
+                    thinking = message.get("thinking", "")
+                    if content:
+                        content_parts.append(content)
+                        stream_callback(content)
+                    if thinking:
+                        thinking_parts.append(thinking)
+                    if message.get("tool_calls"):
+                        tool_calls.extend(message["tool_calls"])
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise LLMUnavailableError(
+                f"Ollama request failed with HTTP {exc.code}: {detail[:300]}"
+            ) from exc
+        except (urllib_error.URLError, TimeoutError, OSError, ValueError) as exc:
+            raise LLMUnavailableError(
+                f"Could not stream from Ollama at {self.ollama_host}: {exc}"
+            ) from exc
+
+        message = {
+            "role": "assistant",
+            "content": "".join(content_parts),
+        }
+        if thinking_parts:
+            message["thinking"] = "".join(thinking_parts)
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return {"message": message, "cancelled": cancelled}
 
     def _ollama_request(self, endpoint, payload=None, timeout=30):
         data = json.dumps(payload).encode("utf-8") if payload is not None else None

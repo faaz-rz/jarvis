@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.config import PROJECT_ROOT
 from core.skills import BaseSkill
+from core.tools import RiskLevel, ToolSpec
 
 
 class AutomationSkill(BaseSkill):
@@ -68,11 +69,52 @@ class AutomationSkill(BaseSkill):
 
         return False
 
+    def tools(self):
+        common_parameters = {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": (
+                        "Path relative to the configured automation root. "
+                        "Parent traversal is forbidden."
+                    ),
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        }
+        return [
+            ToolSpec(
+                name="create_file",
+                description=(
+                    "Create a new empty file inside the permitted automation root. "
+                    "Never overwrite an existing file."
+                ),
+                parameters=common_parameters,
+                handler=self.create_file,
+                risk=RiskLevel.WRITE,
+                confirmation="Create the file '{path}'?",
+            ),
+            ToolSpec(
+                name="create_folder",
+                description="Create a new folder inside the permitted automation root.",
+                parameters=common_parameters,
+                handler=self.create_folder,
+                risk=RiskLevel.WRITE,
+                confirmation="Create the folder '{path}'?",
+            ),
+        ]
+
     def _safe_target(self, value: str):
         cleaned = value.strip().strip("\"'")
-        candidate = (self.automation_root / cleaned).resolve()
+        if not cleaned:
+            return None
+        root = self.automation_root.expanduser().resolve()
+        candidate = (root / cleaned).resolve()
         try:
-            candidate.relative_to(self.automation_root)
+            candidate.relative_to(root)
         except ValueError:
             return None
         return candidate
@@ -89,6 +131,25 @@ class AutomationSkill(BaseSkill):
             f"Create {kind} at {target}? Say yes to confirm or no to cancel."
         )
         return True
+
+    def create_file(self, path):
+        target = self._safe_target(path)
+        if target is None:
+            raise PermissionError(
+                f"Files must stay inside {self.automation_root}."
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch(exist_ok=False)
+        return f"Created file: {target}"
+
+    def create_folder(self, path):
+        target = self._safe_target(path)
+        if target is None:
+            raise PermissionError(
+                f"Folders must stay inside {self.automation_root}."
+            )
+        target.mkdir(parents=True, exist_ok=False)
+        return f"Created folder: {target}"
 
     def _propose_powershell(self, command: str):
         if platform.system() != "Windows":
@@ -118,13 +179,12 @@ class AutomationSkill(BaseSkill):
 
         try:
             if action["kind"] == "folder":
-                action["target"].mkdir(parents=True, exist_ok=False)
-                self.context.speak("Folder created.")
+                relative = action["target"].relative_to(self.automation_root)
+                self.context.speak(self.create_folder(str(relative)))
                 return
             if action["kind"] == "file":
-                action["target"].parent.mkdir(parents=True, exist_ok=True)
-                action["target"].touch(exist_ok=False)
-                self.context.speak("File created.")
+                relative = action["target"].relative_to(self.automation_root)
+                self.context.speak(self.create_file(str(relative)))
                 return
 
             result = subprocess.run(

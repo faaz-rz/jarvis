@@ -15,36 +15,53 @@ instead of preventing the application from starting.
 - Wake-word voice commands with one-step and two-step interaction
 - Offline speech recognition through the bundled Vosk English model
 - Optional Google speech-recognition fallback
-- Local Qwen inference through Ollama, with optional direct-GGUF support
-- JSON memory with atomic, thread-safe persistence
+- Local Qwen inference through Ollama with streaming and cancellation
+- Native Qwen tool calling with JSON-schema argument validation
+- Central permission checks for sensitive, write, execute, and destructive tools
+- Per-action JSONL audit logging
+- SQLite long-term memory with local semantic embeddings and lexical fallback
+- JSON preferences and short conversation history with atomic persistence
 - Dynamically discovered skills with deterministic priorities
-- Application launch, system status, screenshots, search, research, and OCR
+- Qwen screen vision with an OCR fallback
+- Application launch, system status, screenshots, search, and sourced research
 - Custom learned commands
-- Confirmations and safety limits for power and automation actions
+- Optional direct-GGUF support; Qwen also handles code generation by default
 
 ## Architecture
 
 ```text
-Microphone ──> VAD ──> Vosk/Google ─┐
-                                    ├─> JarvisEngine
-Text UI ─────────────────────────────┘        │
-                                             ├─> learned command lookup
-                                             ├─> prioritized skills
-                                             ├─> memory heuristics
-                                             └─> local LLM fallback
-                                                      │
-                                      UI <── response ─┴─> TTS
-                                                      │
-                                                 JSON memory
+Microphone -> VAD -> Vosk/Google --+
+                                   +-> JarvisEngine
+Text or Tkinter UI ----------------+       |
+                                           +-> learned commands / deterministic skills
+                                           |
+                                           +-> Qwen agent loop
+                                               |       |
+                                    relevant memory    +-> typed tool registry
+                                               |              |
+                                               |       permission policy
+                                               |              |
+                                               +<-- audited skill result
+                                               |
+                                      streamed UI response -> TTS
+                                               |
+                                      JSON + SQLite memory
 ```
+
+The hybrid router intentionally keeps predictable commands such as `open
+calculator` fast and deterministic. Requests that need reasoning go to Qwen,
+which can call registered tools, receive their real results, and continue until
+it has a final answer. The loop is capped at five model turns.
 
 The important modules are:
 
 - `jarvis.py`: command-line entry point and Windows CUDA path setup
 - `core/engine.py`: request routing and application lifecycle
-- `core/llm.py`: Qwen/Ollama and optional llama.cpp inference
+- `core/llm.py`: Qwen chat, streaming, tools, embeddings, vision, and llama.cpp
 - `core/memory.py`: preferences, learned commands, and conversation history
-- `core/skills.py`: skill interface, discovery, ordering, and isolation
+- `core/long_term_memory.py`: SQLite storage and semantic retrieval
+- `core/tools.py`: schemas, validation, risk policy, execution, and audit logs
+- `core/skills.py`: skill discovery, ordering, isolation, and tool registration
 - `core/voice.py`: audio capture, VAD, transcription, and wake-word state
 - `core/tts.py`: queued text-to-speech worker
 - `core/ui.py`: console and Tkinter interfaces
@@ -60,7 +77,12 @@ External programs used by optional features:
 - [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) for screen reading
 - [Ollama](https://ollama.com/) with `qwen3.5:4b` for language responses
 
-This machine already has `qwen3.5:4b`, `qwen3:8b`, and `qwen3:14b` installed.
+Install the local chat/vision model and embedding model once:
+
+```bash
+ollama pull qwen3.5:4b
+ollama pull nomic-embed-text
+```
 
 ## Installation
 
@@ -101,6 +123,7 @@ Useful options:
 ```text
 --console          use the terminal instead of Tkinter
 --no-voice         disable microphone input
+--no-long-term-memory  disable SQLite memory for this run
 --backend NAME     auto, ollama, or llama_cpp
 --ollama-model ID  select an installed Ollama model
 --model PATH       use a direct GGUF model with llama.cpp
@@ -120,9 +143,13 @@ important ones are:
 | `JARVIS_LLM_BACKEND` | `ollama` by default; optional `llama_cpp` |
 | `OLLAMA_MODEL` | Ollama model; defaults to `qwen3.5:4b` |
 | `OLLAMA_HOST` | Ollama API address |
-| `MISTRAL_MODEL_PATH` | Optional direct-GGUF model |
+| `OLLAMA_EMBEDDING_MODEL` | Local embedding model; defaults to `nomic-embed-text:latest` |
+| `JARVIS_GGUF_MODEL_PATH` | Optional direct-GGUF model |
 | `CODE_MODEL_PATH` | Optional GGUF coding model |
 | `JARVIS_MEMORY_PATH` | Memory JSON location |
+| `JARVIS_DB_PATH` | SQLite long-term memory location |
+| `JARVIS_MEMORY_SIMILARITY` | Semantic retrieval threshold |
+| `JARVIS_AUDIT_PATH` | Executed tool-call audit log |
 | `JARVIS_SPEECH_BACKEND` | `auto`, `vosk`, `offline`, or `google` |
 | `VOSK_MODEL_PATH` | Offline speech model; defaults to `Vm` |
 | `JARVIS_AUTOMATION_ROOT` | Directory automation is allowed to modify |
@@ -161,6 +188,7 @@ take a screenshot
 search for Python dataclasses
 research retrieval augmented generation
 read my screen
+compare my saved astronomy preference with what is on my screen
 my name is Ada
 what is my name
 remember that my meeting is at four
@@ -173,12 +201,18 @@ File creation and power actions require confirmation. Automated files are
 restricted to `JARVIS_AUTOMATION_ROOT`. PowerShell accepts only a small allowlist
 and rejects command chaining and destructive verbs.
 
+When Qwen chooses a sensitive, write, execute, or destructive tool, JARVIS pauses
+the agent loop and asks for `yes` or `no`. Nothing is executed before approval.
+The Tkinter `STOP` button—or `stop generating` in text mode—cancels an active
+stream.
+
 ## Adding a skill
 
 Create a module in `skills/` with a subclass of `BaseSkill`:
 
 ```python
 from core.skills import BaseSkill
+from core.tools import RiskLevel, ToolSpec
 
 
 class WeatherSkill(BaseSkill):
@@ -191,16 +225,37 @@ class WeatherSkill(BaseSkill):
             return False
         self.context.speak("Weather integration is ready.")
         return True
+
+    def get_weather(self, city):
+        return f"Weather provider result for {city}"
+
+    def tools(self):
+        return [
+            ToolSpec(
+                name="get_weather",
+                description="Get the current weather for a city.",
+                parameters={
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+                handler=self.get_weather,
+                risk=RiskLevel.READ_ONLY,
+            )
+        ]
 ```
 
 Higher-priority skills run first. A skill returns `True` only when it has handled
-the request. Import and runtime failures are logged without crashing other skills.
+the request. Tools use explicit schemas and risk levels; do not expose arbitrary
+shell execution. Import and runtime failures are logged without crashing other
+skills.
 
 ## Tests
 
-The test suite covers memory persistence and concurrency, skill discovery and
-ordering, confirmation behavior, wake-word routing, engine fallbacks, and clean
-shutdown:
+The test suite covers memory persistence and concurrency, semantic retrieval,
+tool schemas and audits, central confirmation behavior, streamed native tool
+calls, skill routing, voice routing, model fallbacks, and clean shutdown:
 
 ```bash
 python -m unittest discover -v
@@ -210,8 +265,11 @@ python -m unittest discover -v
 
 - Qwen through Ollama and Vosk speech recognition run locally.
 - Google speech recognition is online; select `offline` to forbid that fallback.
-- Screen OCR and conversation history can contain sensitive data.
-- `jarvis_memory.json` is plain JSON. Protect or relocate it on shared machines.
+- Screen capture always requires confirmation when Qwen requests it as a tool.
+- Memory and audit files are plain text/SQLite. Protect or relocate them on
+  shared machines, or run with `--no-long-term-memory`.
+- Retrieved memory and visible screen text are labeled untrusted so they cannot
+  silently become system instructions.
 - Generated code is executed only after the explicit `run code` request, but it
   should still be reviewed before use.
 
@@ -225,8 +283,10 @@ Logs are written to `jarvis_system.log`.
 
 - If Qwen does not respond, run `ollama list`, start Ollama, and verify
   `qwen3.5:4b` is installed.
+- If semantic memory is unavailable, verify `nomic-embed-text:latest` is listed
+  by Ollama. Lexical memory search remains available.
 - For direct GGUF inference, install `requirements-llama.txt`, set
-  `JARVIS_LLM_BACKEND=llama_cpp`, and configure `MISTRAL_MODEL_PATH`.
+  `JARVIS_LLM_BACKEND=llama_cpp`, and configure `JARVIS_GGUF_MODEL_PATH`.
 - If CUDA DLL loading fails on Windows, use `repair_jarvis.bat` to reinstall the
   CPU version of `llama-cpp-python`.
 - If voice is unavailable, run `python debug_voice.py` and check microphone

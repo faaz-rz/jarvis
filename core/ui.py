@@ -27,9 +27,26 @@ class BaseUI(abc.ABC):
         """Stop the UI event loop."""
         pass
 
+    def begin_stream(self, sender: str = "JARVIS"):
+        pass
+
+    def append_stream(self, text: str):
+        pass
+
+    def end_stream(self):
+        pass
+
 class ConsoleUI(BaseUI):
+    def __init__(self):
+        self._streaming = False
+        self._output_lock = threading.Lock()
+
     def display_message(self, text: str, sender: str = "JARVIS"):
-        print(f"\n[{sender}]: {text}")
+        with self._output_lock:
+            if self._streaming:
+                print()
+                self._streaming = False
+            print(f"\n[{sender}]: {text}")
 
     def set_status(self, text: str):
         # Console doesn't really have a status bar, maybe just log it
@@ -47,6 +64,23 @@ class ConsoleUI(BaseUI):
 
     def stop(self):
         pass
+
+    def begin_stream(self, sender: str = "JARVIS"):
+        with self._output_lock:
+            if self._streaming:
+                print()
+            print(f"\n[{sender}]: ", end="", flush=True)
+            self._streaming = True
+
+    def append_stream(self, text: str):
+        with self._output_lock:
+            print(text, end="", flush=True)
+
+    def end_stream(self):
+        with self._output_lock:
+            if self._streaming:
+                print()
+                self._streaming = False
 
 # Try importing Tkinter
 try:
@@ -117,6 +151,19 @@ class TkinterUI(BaseUI):
         )
         send_btn.pack(side=tk.RIGHT)
 
+        stop_btn = tk.Button(
+            input_frame,
+            text="STOP",
+            command=lambda: self.callback_handler("stop generating"),
+            bg="#442200",
+            fg="#ffbb66",
+            activebackground="#663300",
+            activeforeground="white",
+            font=("Consolas", 10, "bold"),
+            relief="flat",
+        )
+        stop_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
         # Status Bar
         self.status_var = tk.StringVar()
         status_bar = tk.Label(
@@ -155,6 +202,22 @@ class TkinterUI(BaseUI):
                     self.chat_area.configure(state='disabled')
                 elif msg_type == "status":
                     self.status_var.set(content)
+                elif msg_type == "stream_start":
+                    sender = content
+                    self.chat_area.configure(state="normal")
+                    tag = "user" if sender == "You" else "jarvis"
+                    self.chat_area.insert(tk.END, f"\n[{sender}]: ", tag)
+                    self.chat_area.configure(state="disabled")
+                elif msg_type == "stream_chunk":
+                    self.chat_area.configure(state="normal")
+                    self.chat_area.insert(tk.END, content)
+                    self.chat_area.see(tk.END)
+                    self.chat_area.configure(state="disabled")
+                elif msg_type == "stream_end":
+                    self.chat_area.configure(state="normal")
+                    self.chat_area.insert(tk.END, "\n")
+                    self.chat_area.see(tk.END)
+                    self.chat_area.configure(state="disabled")
         except queue.Empty:
             pass
         finally:
@@ -203,3 +266,12 @@ class TkinterUI(BaseUI):
             self.root.after(0, self.root.quit)
         except (tk.TclError, RuntimeError):
             pass
+
+    def begin_stream(self, sender: str = "JARVIS"):
+        self.msg_queue.put(("stream_start", sender))
+
+    def append_stream(self, text: str):
+        self.msg_queue.put(("stream_chunk", text))
+
+    def end_stream(self):
+        self.msg_queue.put(("stream_end", None))

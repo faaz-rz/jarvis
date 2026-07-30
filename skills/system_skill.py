@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from core.skills import BaseSkill
+from core.tools import RiskLevel, ToolSpec
 
 try:
     import psutil
@@ -15,7 +16,7 @@ except ImportError:
 
 try:
     import pyautogui
-except ImportError:
+except Exception:
     pyautogui = None
 
 
@@ -63,13 +64,13 @@ class SystemSkill(BaseSkill):
 
         if "volume" in lower:
             if "up" in lower or "increase" in lower:
-                self.change_volume(1)
+                self.context.speak(self.set_volume("up"))
                 return True
             if "down" in lower or "decrease" in lower:
-                self.change_volume(-1)
+                self.context.speak(self.set_volume("down"))
                 return True
             if "mute" in lower:
-                self.mute()
+                self.context.speak(self.set_volume("mute"))
                 return True
 
         if "shutdown pc" in lower or "turn off computer" in lower:
@@ -87,30 +88,95 @@ class SystemSkill(BaseSkill):
             return True
 
         if "screenshot" in lower:
-            self.take_screenshot()
+            self.context.speak(self.take_screenshot())
             return True
 
         if "battery" in lower:
-            self.report_battery()
+            self.context.speak(self.get_battery_status())
             return True
 
         return False
 
+    def tools(self):
+        return [
+            ToolSpec(
+                name="get_battery_status",
+                description="Report the computer's battery percentage and charging state.",
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                handler=self.get_battery_status,
+                risk=RiskLevel.READ_ONLY,
+            ),
+            ToolSpec(
+                name="set_volume",
+                description="Increase, decrease, or toggle mute for system audio.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["up", "down", "mute"],
+                        }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": False,
+                },
+                handler=self.set_volume,
+                risk=RiskLevel.ACTION,
+            ),
+            ToolSpec(
+                name="take_screenshot",
+                description="Capture the current screen and save it in Pictures.",
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                handler=self.take_screenshot,
+                risk=RiskLevel.WRITE,
+                confirmation="Capture and save a screenshot of the current screen?",
+            ),
+            ToolSpec(
+                name="control_computer_power",
+                description="Schedule a Windows computer shutdown or restart.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["shutdown", "restart"],
+                        }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": False,
+                },
+                handler=self.execute_power_action,
+                risk=RiskLevel.DESTRUCTIVE,
+                confirmation="This will {action} the computer. Allow it?",
+            ),
+        ]
+
     def _execute_power_action(self, action):
+        self.context.speak(self.execute_power_action(action))
+
+    def execute_power_action(self, action):
         if platform.system() != "Windows":
-            self.context.speak(
-                "Automatic power control is currently supported only on Windows."
-            )
-            return
+            return "Automatic power control is currently supported only on Windows."
         command = ["shutdown", "/s" if action == "shutdown" else "/r", "/t", "10"]
         try:
             subprocess.run(command, check=True, timeout=5)
-            self.context.speak(f"{action.title()} scheduled in 10 seconds.")
+            return f"{action.title()} scheduled in 10 seconds."
         except (OSError, subprocess.SubprocessError) as exc:
             logging.error("Power action failed: %s", exc)
-            self.context.speak(f"Could not {action} the computer.")
+            return f"Could not {action} the computer."
 
-    def change_volume(self, direction):
+    def set_volume(self, action):
+        if action == "mute":
+            return self._mute()
+        direction = 1 if action == "up" else -1
         system = platform.system()
         try:
             if system == "Windows":
@@ -132,13 +198,13 @@ class SystemSkill(BaseSkill):
                     check=True,
                     timeout=5,
                 )
-            action = "Increased" if direction > 0 else "Decreased"
-            self.context.speak(f"{action} volume.")
+            result = "Increased" if direction > 0 else "Decreased"
+            return f"{result} volume."
         except (OSError, subprocess.SubprocessError, AttributeError) as exc:
             logging.error("Volume control failed: %s", exc)
-            self.context.speak("Volume control is unavailable on this system.")
+            return "Volume control is unavailable on this system."
 
-    def mute(self):
+    def _mute(self):
         system = platform.system()
         try:
             if system == "Windows":
@@ -156,32 +222,39 @@ class SystemSkill(BaseSkill):
                     check=True,
                     timeout=5,
                 )
-            self.context.speak("Toggled mute.")
+            return "Toggled mute."
         except (OSError, subprocess.SubprocessError, AttributeError) as exc:
             logging.error("Mute failed: %s", exc)
-            self.context.speak("Mute control is unavailable on this system.")
+            return "Mute control is unavailable on this system."
+
+    # Compatibility helpers for older integrations.
+    def change_volume(self, direction):
+        return self.set_volume("up" if direction > 0 else "down")
+
+    def mute(self):
+        return self.set_volume("mute")
 
     def take_screenshot(self):
         if pyautogui is None:
-            self.context.speak("Screenshot support requires the pyautogui package.")
-            return
+            return "Screenshot support requires the pyautogui package."
         try:
             pictures = Path.home() / "Pictures"
             pictures.mkdir(parents=True, exist_ok=True)
             path = pictures / f"screenshot_{int(time.time())}.png"
             pyautogui.screenshot(str(path))
-            self.context.speak(f"Screenshot saved as {path.name} in Pictures.")
+            return f"Screenshot saved to {path}."
         except Exception as exc:
             logging.error("Screenshot failed: %s", exc)
-            self.context.speak("Failed to take a screenshot.")
+            return f"Failed to take a screenshot: {exc}"
 
-    def report_battery(self):
+    def get_battery_status(self):
         if psutil is None:
-            self.context.speak("Battery reporting requires the psutil package.")
-            return
+            return "Battery reporting requires the psutil package."
         battery = psutil.sensors_battery()
         if not battery:
-            self.context.speak("No battery was detected.")
-            return
+            return "No battery was detected."
         state = "plugged in" if battery.power_plugged else "on battery"
-        self.context.speak(f"Battery is at {int(battery.percent)} percent and {state}.")
+        return f"Battery is at {int(battery.percent)} percent and {state}."
+
+    def report_battery(self):
+        return self.get_battery_status()

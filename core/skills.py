@@ -5,6 +5,9 @@ import inspect
 import threading
 from typing import List, Dict
 
+from core.tools import ToolRegistry
+
+
 class SkillContext:
     """Provides skills with access to the core engine capabilities."""
     def __init__(self, engine):
@@ -44,17 +47,24 @@ class BaseSkill:
     def help(self) -> str:
         return f"{self.name}: {self.description}"
 
+    def tools(self):
+        """Return typed tools this skill exposes to the language model."""
+        return []
+
+
 class SkillManager:
     def __init__(self, context: SkillContext):
         self.context = context
         self.skills: List[BaseSkill] = []
         self.load_errors: Dict[str, str] = {}
         self._process_lock = threading.RLock()
+        self.tool_registry = ToolRegistry()
         self.skills_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'skills')
 
     def load_skills(self):
         self.skills = []
         self.load_errors = {}
+        self.tool_registry = ToolRegistry()
         if not os.path.exists(self.skills_dir):
             os.makedirs(self.skills_dir)
             
@@ -63,6 +73,12 @@ class SkillManager:
                 self._load_skill_file(os.path.join(self.skills_dir, filename))
 
         self.skills.sort(key=lambda skill: (-skill.priority, skill.name.lower()))
+        for skill in self.skills:
+            try:
+                self.tool_registry.register_many(skill.tools())
+            except Exception as exc:
+                self.load_errors[f"{skill.name}:tools"] = str(exc)
+                logging.error("Failed to register tools for %s: %s", skill.name, exc)
         logging.info(f"Loaded {len(self.skills)} skills.")
 
     def _load_skill_file(self, filepath):

@@ -63,6 +63,18 @@ class SkillTests(unittest.TestCase):
             self.memory.get_learned_command("FOCUS MODE"), "open notepad"
         )
 
+    def test_dev_skill_uses_active_qwen_without_separate_model(self):
+        dev = next(
+            skill for skill in self.manager.skills if skill.name == "DevMode"
+        )
+        dev.coding_model = None
+        dev.generated_file = Path(self.temp_dir.name) / "generated.py"
+        self.assertTrue(dev.handle("write code that prints hello"))
+        self.assertEqual(
+            dev.generated_file.read_text(encoding="utf-8"),
+            "generated response",
+        )
+
     def test_power_action_requires_confirmation_and_can_cancel(self):
         system_skill = next(
             skill for skill in self.manager.skills if skill.name == "SystemControl"
@@ -92,6 +104,15 @@ class SkillTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertTrue(automation.handle("yes"))
         self.assertTrue(target.exists())
+
+    def test_automation_normalizes_a_symlinked_root(self):
+        automation = next(
+            skill for skill in self.manager.skills if skill.name == "Automation"
+        )
+        automation.automation_root = Path(self.temp_dir.name)
+        result = automation.create_file("normalized.txt")
+        self.assertTrue((Path(self.temp_dir.name) / "normalized.txt").exists())
+        self.assertIn("Created file", result)
 
 
 if __name__ == "__main__":

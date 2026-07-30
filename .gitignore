@@ -4,6 +4,10 @@ __pycache__/
 
 # Logs
 *.log
+jarvis_audit.jsonl
+jarvis_memory.db
+jarvis_memory.db-shm
+jarvis_memory.db-wal
 debug_log_cuda.txt
 verify_log.txt
 
