@@ -21,6 +21,8 @@ class CLITests(unittest.TestCase):
         self.assertIn("--no-voice", result.stdout)
         self.assertIn("--no-long-term-memory", result.stdout)
         self.assertIn("--ollama-model", result.stdout)
+        self.assertIn("--dashboard-port", result.stdout)
+        self.assertIn("--tk", result.stdout)
 
     def test_console_mode_starts_handles_input_and_stops(self):
         with tempfile.TemporaryDirectory() as temporary:

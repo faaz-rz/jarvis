@@ -9,6 +9,7 @@ from typing import Optional
 from core.config import default_database_path
 from core.long_term_memory import LongTermMemory
 from core.memory import Memory
+from core.missions import MISSION_PLAN_SCHEMA, MissionStore
 from core.llm import LLMEngine, LLMUnavailableError
 from core.ui import BaseUI, ConsoleUI, TkinterUI
 from core.skills import SkillManager, SkillContext
@@ -26,9 +27,22 @@ class JarvisEngine:
         enable_voice: bool = True,
         prefer_gui: bool = True,
         enable_long_term_memory: bool = True,
+        prefer_dashboard: bool = True,
+        dashboard_port=None,
+        open_dashboard: bool = True,
+        enable_missions: bool = True,
     ):
         self.memory = memory or Memory()
         self.llm = llm or LLMEngine()
+        self.missions = (
+            MissionStore(memory_path=getattr(self.memory, "filepath", None))
+            if enable_missions
+            else None
+        )
+        active_mission = self.missions.active() if self.missions else None
+        self._active_mission_id = (
+            active_mission["id"] if active_mission else None
+        )
         self.long_term_memory = (
             LongTermMemory(
                 self.llm,
@@ -45,6 +59,7 @@ class JarvisEngine:
         self._shutdown_lock = threading.Lock()
         self._agent_state_lock = threading.RLock()
         self._active_cancel_event = None
+        self._active_generation_mission_id = None
         self._pending_tool_request = None
         self._llm_queue = queue.Queue()
         self._llm_worker_thread = threading.Thread(
@@ -56,16 +71,27 @@ class JarvisEngine:
 
         if ui is not None:
             self.ui = ui
-        elif prefer_gui:
+        elif prefer_gui and prefer_dashboard:
             try:
-                self.ui = TkinterUI(self.handle_input)
+                from core.dashboard import DashboardUI
+
+                self.ui = DashboardUI(
+                    port=dashboard_port,
+                    open_browser=open_dashboard,
+                )
             except Exception as exc:
                 logging.warning(
-                    "Tkinter UI failed to initialize; falling back to console: %s", exc
+                    "Dashboard UI failed to initialize; falling back to Tkinter: %s",
+                    exc,
                 )
-                self.ui = ConsoleUI()
+                self.ui = self._create_tkinter_or_console()
+        elif prefer_gui:
+            self.ui = self._create_tkinter_or_console()
         else:
             self.ui = ConsoleUI()
+
+        if hasattr(self.ui, "bind_handler"):
+            self.ui.bind_handler(self.handle_input)
 
         self.context = SkillContext(self)
         self.skill_manager = SkillManager(self.context)
@@ -75,17 +101,54 @@ class JarvisEngine:
         if hasattr(self.tts, "set_callbacks"):
             self.tts.set_callbacks(self._on_speech_start, self._on_speech_end)
 
+    def _create_tkinter_or_console(self):
+        try:
+            return TkinterUI(self.handle_input)
+        except Exception as exc:
+            logging.warning(
+                "Tkinter UI failed to initialize; falling back to console: %s",
+                exc,
+            )
+            return ConsoleUI()
+
+    def _emit_ui_event(self, event_type, **data):
+        try:
+            self.ui.emit_event(event_type, data)
+        except Exception as exc:
+            logging.debug("UI event '%s' was not delivered: %s", event_type, exc)
+
+    def _configure_ui(self):
+        configure = getattr(self.ui, "configure_system", None)
+        if not configure:
+            return
+        configure(
+            model=getattr(self.llm, "model_name", "local model"),
+            backend=getattr(self.llm, "backend", "local"),
+            skills=[skill.name for skill in self.skill_manager.skills],
+            tools=self.skill_manager.tool_registry.names(),
+            voice_enabled=bool(self.voice_manager),
+            memory_enabled=bool(self.long_term_memory),
+        )
+        if self.missions:
+            self._emit_ui_event(
+                "mission_updated",
+                mission=self.missions.active(),
+            )
+
     def _on_speech_start(self):
+        self._emit_ui_event("speech_started")
         if self.voice_manager:
             self.voice_manager.pause()
 
     def _on_speech_end(self):
+        self._emit_ui_event("speech_finished")
         if self.running and self.voice_manager:
             self.voice_manager.resume()
 
     def start(self):
         logging.info("Jarvis Engine Starting...")
         self.skill_manager.load_skills()
+        self._configure_ui()
         count = len(self.skill_manager.skills)
         self.ui.display_message(f"System online. {count} skills loaded.", "SYSTEM")
         self.ui.display_message(
@@ -106,7 +169,12 @@ class JarvisEngine:
         self.speak("System Online.")
         
         if self.voice_manager:
-            self.voice_manager.start_listening()
+            listening = bool(self.voice_manager.start_listening())
+            self._emit_ui_event(
+                "voice_state",
+                enabled=True,
+                listening=listening,
+            )
 
         if isinstance(self.ui, ConsoleUI):
             while self.running:
@@ -122,10 +190,12 @@ class JarvisEngine:
 
         text = text.strip()
         if text.lower() in ("exit", "quit", "shutdown", "shutdown jarvis"):
+            self._emit_ui_event("system_shutdown")
             self.shutdown()
             return
 
         self.ui.display_message(text, "You")
+        self._emit_ui_event("request_received", text=text[:500])
 
         if text.lower() in {"stop generating", "cancel generation", "cancel response"}:
             with self._agent_state_lock:
@@ -133,8 +203,12 @@ class JarvisEngine:
             if active:
                 active.set()
                 self.ui.set_status("Cancelling...")
+                self._emit_ui_event("generation_cancel_requested")
             else:
                 self.ui.display_message("There is no active generation.", "SYSTEM")
+            return
+
+        if self._handle_mission_command(text):
             return
 
         if self._handle_pending_tool_permission(text):
@@ -155,6 +229,10 @@ class JarvisEngine:
             learned_action = self.memory.resolve_learned_command(text)
             if learned_action:
                 routed_text = learned_action
+                self._emit_ui_event(
+                    "learned_command_resolved",
+                    action=learned_action[:500],
+                )
                 self.ui.display_message(
                     f"Executing learned action: {learned_action}", "SYSTEM"
                 )
@@ -164,9 +242,14 @@ class JarvisEngine:
             return
 
         if self.skill_manager.process(routed_text):
+            self._emit_ui_event(
+                "task_completed",
+                mode="deterministic",
+            )
             return
 
         self.ui.set_status("Thinking...")
+        self._emit_ui_event("model_queued")
         history = self.memory.get_recent_history()
         extras = "\n".join(self.memory.get_system_prompt_extras())
         model_name = getattr(self.llm, "model_name", "a local language model")
@@ -175,13 +258,22 @@ class JarvisEngine:
             f"Your language model is {model_name}; state this accurately if asked. "
             "Be helpful, precise, concise, and honest about capabilities. "
             "Do not describe yourself as a home automation system. "
-            "Do not claim an action was completed unless a skill actually completed it."
+            "Do not claim an action was completed unless a skill actually completed it. "
+            "Operate as one unified intelligence: tools are your capabilities, not "
+            "separate agents or departments. For complex requests, choose the next "
+            "useful step, use the minimum necessary tools, and verify actual results. "
+            "Give concise operational updates but never reveal private chain-of-thought."
         )
         if extras:
             system_prompt += f"\nAdditional user instructions:\n{extras}"
 
         if self.long_term_memory:
+            self._emit_ui_event("memory_search_started")
             relevant = self.long_term_memory.search(routed_text, limit=4)
+            self._emit_ui_event(
+                "memory_recalled",
+                count=len(relevant),
+            )
             if relevant:
                 memory_text = "\n".join(
                     f"- [{item['kind']}] {item['content'][:500]}"
@@ -209,7 +301,12 @@ class JarvisEngine:
             try:
                 if task is None:
                     return
-                self._run_llm(*task)
+                if isinstance(task, dict) and task.get("kind", "").startswith(
+                    "mission_"
+                ):
+                    self._process_mission_task(task)
+                else:
+                    self._run_llm(*task)
             except Exception as exc:
                 logging.exception("Unhandled LLM worker error: %s", exc)
             finally:
@@ -220,28 +317,31 @@ class JarvisEngine:
         prompt_or_messages,
         original_user_text,
         agent_steps_remaining=5,
+        mission_context=None,
     ):
         lower_text = original_user_text.lower()
         response = None
 
         name_match = re.search(r"\bmy name is\s+(.+?)[.!?]*$", original_user_text, re.I)
-        if name_match:
+        if not mission_context and name_match:
             name = name_match.group(1).strip()
             self.memory.set_preference("user_name", name)
             response = f"Nice to meet you, {name}. I've saved that to memory."
         
-        elif "i am your boss" in lower_text or "i'm your boss" in lower_text:
+        elif not mission_context and (
+            "i am your boss" in lower_text or "i'm your boss" in lower_text
+        ):
             self.memory.set_preference("user_role", "Boss")
             response = "Understood, Boss. I am at your service."
 
-        elif "what is my name" in lower_text:
+        elif not mission_context and "what is my name" in lower_text:
             name = self.memory.get_preference("user_name")
             if name:
                 response = f"Your name is {name}."
             else:
                 response = "I don't know your name yet. Please tell me 'My name is...'."
 
-        elif "who am i" in lower_text:
+        elif not mission_context and "who am i" in lower_text:
             role = self.memory.get_preference("user_role")
             name = self.memory.get_preference("user_name")
             parts = []
@@ -252,7 +352,7 @@ class JarvisEngine:
             else:
                 response = " ".join(parts)
 
-        elif "remember that" in lower_text:
+        elif not mission_context and "remember that" in lower_text:
             fact = original_user_text[
                 original_user_text.lower().find("remember that") + len("remember that"):
             ].strip()
@@ -272,6 +372,7 @@ class JarvisEngine:
                     prompt_or_messages,
                     original_user_text,
                     agent_steps_remaining,
+                    mission_context,
                 )
                 return
             response = self.llm.generate(prompt_or_messages)
@@ -302,15 +403,38 @@ class JarvisEngine:
                 "Built-in commands are still available; check jarvis_system.log for details."
             )
 
-        self._deliver_response(response, original_user_text)
+        if mission_context:
+            self._complete_mission_step(
+                mission_context,
+                response,
+                success=False,
+            )
+        else:
+            self._deliver_response(response, original_user_text)
 
-    def _run_agent(self, messages, original_user_text, steps_remaining=5):
+    def _run_agent(
+        self,
+        messages,
+        original_user_text,
+        steps_remaining=5,
+        mission_context=None,
+    ):
         registry = self.skill_manager.tool_registry
         tools = registry.schemas()
         for step_index in range(steps_remaining):
+            self._emit_ui_event(
+                "model_started",
+                step=step_index + 1,
+                steps_remaining=steps_remaining - step_index,
+            )
             cancel_event = threading.Event()
             with self._agent_state_lock:
                 self._active_cancel_event = cancel_event
+                self._active_generation_mission_id = (
+                    mission_context.get("mission_id")
+                    if mission_context
+                    else None
+                )
 
             stream_state = {"started": False}
 
@@ -335,10 +459,15 @@ class JarvisEngine:
                 with self._agent_state_lock:
                     if self._active_cancel_event is cancel_event:
                         self._active_cancel_event = None
+                        self._active_generation_mission_id = None
                 if stream_state["started"] and hasattr(self.ui, "end_stream"):
                     self.ui.end_stream()
 
             message = result.get("message", {})
+            self._emit_ui_event(
+                "model_finished",
+                has_tool_calls=bool(message.get("tool_calls")),
+            )
 
             if result.get("cancelled"):
                 partial = message.get("content", "").strip()
@@ -347,6 +476,8 @@ class JarvisEngine:
                     response,
                     original_user_text,
                     already_displayed=bool(partial and stream_state["started"]),
+                    completion_event="task_cancelled",
+                    mission_context=mission_context,
                 )
                 return
 
@@ -360,6 +491,7 @@ class JarvisEngine:
                     response,
                     original_user_text,
                     already_displayed=stream_state["started"],
+                    mission_context=mission_context,
                 )
                 return
 
@@ -370,12 +502,33 @@ class JarvisEngine:
                         "messages": messages,
                         "user_text": original_user_text,
                         "steps_remaining": steps_remaining - step_index - 1,
+                        "mission_context": mission_context,
                     }
+                if mission_context and self.missions:
+                    self.missions.set_step_status(
+                        mission_context["mission_id"],
+                        mission_context["position"],
+                        "waiting_permission",
+                    )
+                    mission = self.missions.set_status(
+                        mission_context["mission_id"],
+                        "waiting_permission",
+                        mission_context["position"],
+                    )
+                    self._emit_ui_event(
+                        "mission_updated",
+                        mission=mission,
+                    )
                 confirmations = [
                     registry.confirmation_text(call)
                     for call in calls
                     if registry.needs_confirmation(call)
                 ]
+                self._emit_ui_event(
+                    "permission_required",
+                    tools=[call.name for call in calls],
+                    confirmations=confirmations,
+                )
                 prompt = (
                     "Permission required:\n- "
                     + "\n- ".join(confirmations)
@@ -386,12 +539,22 @@ class JarvisEngine:
                 self.speak(prompt)
                 return
 
-            self._append_tool_results(messages, calls, confirmed=False)
+            self._append_tool_results(
+                messages,
+                calls,
+                confirmed=False,
+                mission_context=mission_context,
+            )
 
-        self._deliver_response(
-            "I stopped because the tool-call limit was reached.",
-            original_user_text,
-        )
+        limit_message = "I stopped because the tool-call limit was reached."
+        if mission_context:
+            self._complete_mission_step(
+                mission_context,
+                limit_message,
+                success=False,
+            )
+        else:
+            self._deliver_response(limit_message, original_user_text)
 
     def _handle_pending_tool_permission(self, text):
         lower = text.lower().strip()
@@ -416,9 +579,23 @@ class JarvisEngine:
         if lower in {"no", "cancel", "stop", "deny"}:
             for call in pending["calls"]:
                 self.skill_manager.tool_registry.audit_denial(call)
+            self._emit_ui_event(
+                "permission_resolved",
+                allowed=False,
+                tools=[call.name for call in pending["calls"]],
+            )
+            mission_context = pending.get("mission_context")
+            if mission_context:
+                self._complete_mission_step(
+                    mission_context,
+                    "Mission paused because the requested action was denied.",
+                    success=False,
+                )
+                return True
             self._deliver_response(
                 "The requested action was cancelled.",
                 pending["user_text"],
+                completion_event="task_cancelled",
             )
             return True
         if lower not in {"yes", "confirm", "allow", "proceed", "do it"}:
@@ -428,21 +605,66 @@ class JarvisEngine:
             return True
 
         messages = pending["messages"]
-        self._append_tool_results(messages, pending["calls"], confirmed=True)
+        mission_context = pending.get("mission_context")
+        self._emit_ui_event(
+            "permission_resolved",
+            allowed=True,
+            tools=[call.name for call in pending["calls"]],
+        )
+        if mission_context and self.missions:
+            self.missions.set_step_status(
+                mission_context["mission_id"],
+                mission_context["position"],
+                "running",
+            )
+            mission = self.missions.set_status(
+                mission_context["mission_id"],
+                "running",
+                mission_context["position"],
+            )
+            self._emit_ui_event("mission_updated", mission=mission)
+        self._append_tool_results(
+            messages,
+            pending["calls"],
+            confirmed=True,
+            mission_context=mission_context,
+        )
         self.ui.set_status("Continuing...")
         self._llm_queue.put(
             (
                 messages,
                 pending["user_text"],
                 pending.get("steps_remaining", 0),
+                mission_context,
             )
         )
         return True
 
-    def _append_tool_results(self, messages, calls, confirmed):
+    def _append_tool_results(
+        self,
+        messages,
+        calls,
+        confirmed,
+        mission_context=None,
+    ):
         registry = self.skill_manager.tool_registry
         for call in calls:
+            self._emit_ui_event("tool_started", tool=call.name)
             result = registry.execute(call, confirmed=confirmed)
+            self._emit_ui_event(
+                "tool_finished",
+                tool=call.name,
+                success=result.success,
+                result=result.content[:500],
+            )
+            if mission_context is not None:
+                mission_context.setdefault("tool_results", []).append(
+                    {
+                        "tool": call.name,
+                        "success": result.success,
+                        "result": result.content[:500],
+                    }
+                )
             messages.append(
                 {
                     "role": "tool",
@@ -479,15 +701,33 @@ class JarvisEngine:
         )
 
     def _finish_streamed_response(
-        self, response, user_text, already_displayed=False
+        self,
+        response,
+        user_text,
+        already_displayed=False,
+        completion_event="task_completed",
+        mission_context=None,
     ):
         self.ui.set_status("")
         if not already_displayed:
             self.ui.display_message(response, "JARVIS")
+        if mission_context:
+            self._complete_mission_step(
+                mission_context,
+                response,
+                success=completion_event == "task_completed",
+            )
+            return
         self.speak(response)
         self._record_exchange(user_text, response)
+        self._emit_ui_event(completion_event, mode="qwen")
 
-    def _deliver_response(self, response: str, user_text: Optional[str] = None):
+    def _deliver_response(
+        self,
+        response: str,
+        user_text: Optional[str] = None,
+        completion_event="task_completed",
+    ):
         if not self.running:
             return
         self.ui.set_status("")
@@ -495,6 +735,454 @@ class JarvisEngine:
         self.speak(response)
         if user_text:
             self._record_exchange(user_text, response)
+            self._emit_ui_event(completion_event)
+
+    def _handle_mission_command(self, text):
+        if not self.missions:
+            return False
+        lower = text.lower().strip()
+        prefixes = ("super mission:", "mission:")
+        for prefix in prefixes:
+            if lower.startswith(prefix):
+                goal = text[len(prefix):].strip()
+                self._start_mission(goal)
+                return True
+        if lower in {"pause mission", "pause super mission"}:
+            self._pause_mission()
+            return True
+        if lower in {"resume mission", "continue mission", "resume super mission"}:
+            self._resume_mission()
+            return True
+        if lower in {"cancel mission", "cancel super mission"}:
+            self._cancel_mission()
+            return True
+        if lower in {"mission status", "super mission status"}:
+            mission = self.missions.active()
+            if not mission:
+                self._announce_mission("There is no active Super Mission.")
+            else:
+                completed = sum(
+                    step["status"] == "completed"
+                    for step in mission["steps"]
+                )
+                self._announce_mission(
+                    f"Mission '{mission['title']}' is {mission['status']}. "
+                    f"{completed} of {len(mission['steps'])} steps are complete."
+                )
+            return True
+        return False
+
+    def _start_mission(self, goal):
+        goal = str(goal).strip()
+        if not goal:
+            self._announce_mission(
+                "Describe the goal after 'Super Mission:'."
+            )
+            return
+        if len(goal) > 2000:
+            self._announce_mission(
+                "That mission is too long. Keep the goal under 2,000 characters."
+            )
+            return
+        with self._agent_state_lock:
+            active = self.missions.active()
+            if active:
+                self._announce_mission(
+                    f"Mission '{active['title']}' is already "
+                    f"{active['status']}. Resume or cancel it before "
+                    "starting another."
+                )
+                self._emit_ui_event("mission_updated", mission=active)
+                return
+            mission = self.missions.create_planning(goal)
+            self._active_mission_id = mission["id"]
+        self.ui.set_status("Planning Super Mission...")
+        self._emit_ui_event("mission_planning", goal=goal[:500])
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._llm_queue.put(
+            {
+                "kind": "mission_plan",
+                "goal": goal,
+                "mission_id": mission["id"],
+            }
+        )
+
+    def _process_mission_task(self, task):
+        kind = task.get("kind")
+        if kind == "mission_plan":
+            self._plan_mission(task["goal"], task["mission_id"])
+        elif kind == "mission_continue":
+            self._continue_mission(task["mission_id"])
+
+    def _plan_mission(self, goal, mission_id):
+        current = self.missions.get(mission_id)
+        if not current or current["status"] in {"cancelled", "completed", "failed"}:
+            return
+        if current["status"] == "paused":
+            return
+        tools = ", ".join(self.skill_manager.tool_registry.names())
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are the planning function of one unified JARVIS brain. "
+                    "Create a grounded plan with one to six observable steps. "
+                    "Each step must have one clear outcome and verification criterion. "
+                    "Use only capabilities that exist, never invent completed work, "
+                    "never bypass user permission, and do not reveal chain-of-thought. "
+                    f"Available tools: {tools or 'conversation only'}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Create a Super Mission plan for this goal:\n{goal}",
+            },
+        ]
+        cancel_event = threading.Event()
+        with self._agent_state_lock:
+            self._active_cancel_event = cancel_event
+            self._active_generation_mission_id = mission_id
+        try:
+            result = self.llm.chat(
+                messages,
+                max_tokens=1200,
+                format_schema=MISSION_PLAN_SCHEMA,
+                cancel_event=cancel_event,
+            )
+            if result.get("cancelled"):
+                return
+            current = self.missions.get(mission_id)
+            if not current or current["status"] != "planning":
+                return
+            content = result.get("message", {}).get("content", "")
+            plan = MissionStore.parse_plan_response(content)
+            mission = self.missions.apply_plan(mission_id, plan)
+        except Exception as exc:
+            logging.exception("Super Mission planning failed: %s", exc)
+            current = self.missions.get(mission_id)
+            if not current or current["status"] in {"paused", "cancelled"}:
+                return
+            mission = self.missions.fail_planning(mission_id)
+            if not mission or mission["status"] != "failed":
+                return
+            self._active_mission_id = None
+            self.ui.set_status("")
+            self._emit_ui_event(
+                "mission_failed",
+                reason=str(exc)[:500],
+                mission=mission,
+            )
+            self._emit_ui_event("mission_updated", mission=mission)
+            self._announce_mission(
+                "I could not create a reliable mission plan. "
+                "Make sure Ollama and Qwen are running, then try again."
+            )
+            return
+        finally:
+            with self._agent_state_lock:
+                if self._active_cancel_event is cancel_event:
+                    self._active_cancel_event = None
+                    self._active_generation_mission_id = None
+
+        self._active_mission_id = mission["id"]
+        self._emit_ui_event("mission_created", mission=mission)
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._announce_mission(
+            f"Super Mission ready: {mission['title']}. "
+            f"Starting {len(mission['steps'])} verified steps.",
+            speak=False,
+        )
+        self._llm_queue.put(
+            {"kind": "mission_continue", "mission_id": mission["id"]}
+        )
+
+    def _continue_mission(self, mission_id):
+        mission = self.missions.get(mission_id)
+        if not mission or mission["status"] in {
+            "paused",
+            "cancelled",
+            "completed",
+        }:
+            return
+        if mission["status"] == "paused":
+            return
+        step = self.missions.next_pending_step(mission_id)
+        if not step:
+            self._finish_mission(mission_id)
+            return
+
+        mission = self.missions.set_status(
+            mission_id,
+            "running",
+            step["position"],
+        )
+        mission = self.missions.set_step_status(
+            mission_id,
+            step["position"],
+            "running",
+        )
+        context = {
+            "mission_id": mission_id,
+            "position": step["position"],
+            "goal": mission["goal"],
+            "mission_title": mission["title"],
+            "step_title": step["title"],
+            "success_criteria": step["success_criteria"],
+            "requires_tool": step["requires_tool"],
+            "tool_results": [],
+        }
+        self._emit_ui_event(
+            "mission_step_started",
+            mission=mission,
+            position=step["position"],
+        )
+        self._emit_ui_event("mission_updated", mission=mission)
+        self.ui.set_status(f"Mission step: {step['title']}")
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are one unified JARVIS brain executing one approved mission "
+                    "step. Perform only the current step. Use registered tools when "
+                    "they provide real evidence. Never claim success before a tool "
+                    "returns successfully. Protected actions must wait for user "
+                    "permission. Give a concise result, not private chain-of-thought."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Mission: {mission['goal']}\n"
+                    f"Current step: {step['title']}\n"
+                    f"Instruction: {step['instruction']}\n"
+                    f"Success criteria: {step['success_criteria']}"
+                ),
+            },
+        ]
+        self._run_llm(
+            messages,
+            f"Mission step: {step['title']}",
+            5,
+            context,
+        )
+
+    def _complete_mission_step(self, context, response, success):
+        if not self.missions:
+            return
+        mission = self.missions.get(context["mission_id"])
+        if not mission or mission["status"] in {"cancelled", "completed"}:
+            return
+        position = context["position"]
+        tool_results = context.get("tool_results", [])
+        if success and context.get("requires_tool") and not any(
+            result.get("success") for result in tool_results
+        ):
+            success = False
+            response = (
+                "The step required a real capability result, but no tool "
+                "completed successfully."
+            )
+        if success and tool_results and not any(
+            result.get("success") for result in tool_results
+        ):
+            success = False
+            response = "Every tool used for this step failed."
+        if success:
+            evidence = self._mission_evidence(context, response)
+            mission = self.missions.set_step_status(
+                context["mission_id"],
+                position,
+                "completed",
+                evidence,
+            )
+            self._emit_ui_event(
+                "mission_step_completed",
+                mission=mission,
+                position=position,
+                result=evidence[:500],
+            )
+            self._emit_ui_event("mission_updated", mission=mission)
+            self._llm_queue.put(
+                {
+                    "kind": "mission_continue",
+                    "mission_id": context["mission_id"],
+                }
+            )
+            return
+
+        mission = self.missions.pause(
+            context["mission_id"],
+            str(response)[:1000],
+        )
+        self.ui.set_status("Mission paused")
+        self._emit_ui_event(
+            "mission_paused",
+            mission=mission,
+            reason=str(response)[:500],
+        )
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._announce_mission(
+            f"Super Mission paused at '{context['step_title']}'. "
+            f"{response}",
+            speak=False,
+        )
+
+    @staticmethod
+    def _mission_evidence(context, response):
+        successful_tools = [
+            result
+            for result in context.get("tool_results", [])
+            if result.get("success")
+        ]
+        if successful_tools:
+            tool_summary = "; ".join(
+                f"{item['tool']}: {item['result']}"
+                for item in successful_tools[-3:]
+            )
+            return f"{response}\nVerified tool results: {tool_summary}"[:2000]
+        return str(response)[:2000]
+
+    def _finish_mission(self, mission_id):
+        mission = self.missions.complete(mission_id)
+        if not mission or mission["status"] != "completed":
+            return
+        self._active_mission_id = None
+        completed = sum(
+            step["status"] == "completed" for step in mission["steps"]
+        )
+        response = (
+            f"Super Mission complete: {mission['title']}. "
+            f"All {completed} steps finished."
+        )
+        self.ui.set_status("")
+        self.ui.display_message(response, "JARVIS")
+        self.speak(response)
+        self._record_exchange(
+            f"Super Mission: {mission['goal']}",
+            response,
+        )
+        self._emit_ui_event("mission_completed", mission=mission)
+        self._emit_ui_event("mission_updated", mission=mission)
+
+    def _pause_mission(self):
+        mission = self.missions.active()
+        if not mission:
+            self._announce_mission("There is no active Super Mission.")
+            return
+        with self._agent_state_lock:
+            active = self._active_cancel_event
+            active_mission_id = self._active_generation_mission_id
+            pending = self._pending_tool_request
+            if (
+                pending
+                and pending.get("mission_context", {}).get("mission_id")
+                == mission["id"]
+            ):
+                self._pending_tool_request = None
+        if (
+            pending
+            and pending.get("mission_context", {}).get("mission_id")
+            == mission["id"]
+        ):
+            self._emit_ui_event(
+                "permission_resolved",
+                allowed=False,
+                tools=[call.name for call in pending["calls"]],
+            )
+            for call in pending["calls"]:
+                self.skill_manager.tool_registry.audit_denial(
+                    call,
+                    "Mission paused by user.",
+                )
+        if active and active_mission_id == mission["id"]:
+            active.set()
+        mission = self.missions.pause(mission["id"], "Paused by user.")
+        self._emit_ui_event("mission_paused", mission=mission, reason="Paused by user.")
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._announce_mission(f"Super Mission paused: {mission['title']}.")
+
+    def _resume_mission(self):
+        mission = self.missions.active()
+        if not mission:
+            self._announce_mission("There is no paused Super Mission to resume.")
+            return
+        if mission["status"] != "paused":
+            self._announce_mission(
+                f"Mission '{mission['title']}' is already {mission['status']}."
+            )
+            return
+        if not mission["steps"]:
+            mission = self.missions.set_status(mission["id"], "planning")
+            self._active_mission_id = mission["id"]
+            self._emit_ui_event("mission_planning", goal=mission["goal"][:500])
+            self._emit_ui_event("mission_updated", mission=mission)
+            self._announce_mission(
+                f"Replanning Super Mission: {mission['title']}.",
+                speak=False,
+            )
+            self._llm_queue.put(
+                {
+                    "kind": "mission_plan",
+                    "goal": mission["goal"],
+                    "mission_id": mission["id"],
+                }
+            )
+            return
+        mission = self.missions.set_status(mission["id"], "running")
+        self._active_mission_id = mission["id"]
+        self._emit_ui_event("mission_resumed", mission=mission)
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._announce_mission(
+            f"Resuming Super Mission: {mission['title']}.",
+            speak=False,
+        )
+        self._llm_queue.put(
+            {"kind": "mission_continue", "mission_id": mission["id"]}
+        )
+
+    def _cancel_mission(self):
+        mission = self.missions.active()
+        if not mission:
+            self._announce_mission("There is no active Super Mission.")
+            return
+        with self._agent_state_lock:
+            active = self._active_cancel_event
+            active_mission_id = self._active_generation_mission_id
+            pending = self._pending_tool_request
+            if (
+                pending
+                and pending.get("mission_context", {}).get("mission_id")
+                == mission["id"]
+            ):
+                self._pending_tool_request = None
+        if (
+            pending
+            and pending.get("mission_context", {}).get("mission_id")
+            == mission["id"]
+        ):
+            self._emit_ui_event(
+                "permission_resolved",
+                allowed=False,
+                tools=[call.name for call in pending["calls"]],
+            )
+            for call in pending["calls"]:
+                self.skill_manager.tool_registry.audit_denial(
+                    call,
+                    "Mission cancelled by user.",
+                )
+        mission = self.missions.cancel(mission["id"])
+        if active and active_mission_id == mission["id"]:
+            active.set()
+        self._active_mission_id = None
+        self._emit_ui_event("mission_cancelled", mission=mission)
+        self._emit_ui_event("mission_updated", mission=mission)
+        self._announce_mission(f"Super Mission cancelled: {mission['title']}.")
+
+    def _announce_mission(self, message, speak=True):
+        self.ui.display_message(message, "JARVIS")
+        if speak:
+            self.speak(message)
 
     def _record_exchange(self, user_text, response):
         self.memory.add_exchange(user_text, response)

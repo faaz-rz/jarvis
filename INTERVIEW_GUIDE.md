@@ -11,6 +11,15 @@ Qwen so its final answer reflects what actually happened. The system also
 supports streaming, cancellation, local voice input, Qwen vision, and semantic
 long-term memory.
 
+For larger objectives, Super Mission mode asks Qwen for a schema-validated plan,
+persists it in SQLite, runs one step at a time, and requires observable evidence
+before advancing. The same central permission policy remains in control.
+
+The primary interface presents Qwen as one central brain rather than separate
+departments. Voice, vision, memory, research, applications, files, system
+control, and code appear as abilities around the core and illuminate only when
+real engine events activate them.
+
 ## Request flow
 
 1. Text or voice reaches `JarvisEngine`.
@@ -25,6 +34,12 @@ long-term memory.
 7. Tool results go back to Qwen. It can call another tool or stream a final
    response. The loop stops after five iterations.
 8. The final exchange is saved in JSON history and SQLite long-term memory.
+
+For a Super Mission, a separate planning turn produces one to six structured
+steps. The engine persists the plan, executes the current step through the same
+agent loop, records successful tool results as evidence, and either advances,
+pauses, or waits for permission. It never launches a collection of independent
+department agents.
 
 ## Why the architecture is hybrid
 
@@ -71,6 +86,22 @@ can stop generation. TTS and memory embedding have separate background workers.
 Tkinter updates are passed through a queue because Tk widgets are not
 thread-safe.
 
+### Live brain dashboard
+
+The default browser interface is served only on the loopback address. Engine
+events drive the graph, task lifecycle, transcript, activity trace, streaming
+response, cancellation, and approval dialog. Browser actions require a random
+session token and same-origin checks. The interface shows operational states,
+not hidden model chain-of-thought.
+
+### Durable Super Missions
+
+Mission state and step results live in a dedicated SQLite database. If the
+process exits while planning, running, or waiting for permission, startup
+recovery marks the mission paused and resets the interrupted step to pending.
+The user must explicitly resume it. A step declared `requires_tool` cannot be
+marked complete unless at least one real tool succeeded.
+
 ## Safety controls to mention
 
 - Tool allowlist: Qwen can call only registered functions.
@@ -83,6 +114,10 @@ thread-safe.
 - Executed and failed tool actions are written to an audit log.
 - Screen and recalled memory content are treated as data, not instructions.
 - Tool loops have a fixed upper bound and model requests can be cancelled.
+- Super Missions run sequentially, survive restarts, and pause when required
+  evidence is missing.
+- The dashboard cannot be framed by another site and rejects cross-origin
+  control requests.
 
 ## Failure handling
 
@@ -97,10 +132,11 @@ thread-safe.
 
 ## Evidence and testing
 
-The automated suite verifies tool schemas, validation, audit records, permission
-gating, the agent's write-confirmation cycle, streamed native tool calls,
-semantic and lexical memory behavior, concurrent JSON persistence, skill
-priority, wake-word states, model failure fallback, and clean shutdown.
+The automated suite verifies mission persistence, crash recovery, required-tool
+evidence, tool schemas, validation, audit records, permission gating, the
+agent's write-confirmation cycle, streamed native tool calls, semantic and
+lexical memory behavior, concurrent JSON persistence, skill priority,
+wake-word states, model failure fallback, and clean shutdown.
 
 Live validation on this machine demonstrated:
 
@@ -129,6 +165,18 @@ The active request owns a `threading.Event`. The STOP action sets it; the
 streaming Ollama reader checks the event between chunks, closes the response,
 clears the active state, and preserves any partial answer.
 
+**Is Super Mission mode a multi-agent system?**
+
+No. It is one Qwen-driven brain using a durable state machine. Qwen plans the
+goal, the engine executes one saved step through the existing tool registry, and
+the verifier checks real evidence before proceeding.
+
+**Did you train or fine-tune Qwen?**
+
+No model weights are changed. The behavior comes from structured prompts, a
+strict JSON plan schema, persistent mission state, tool-grounded execution, and
+deterministic safety checks outside the model.
+
 **How would you scale it?**
 
 Separate model, tool, and memory services; add per-user authorization and
@@ -151,3 +199,5 @@ stronger end-to-end GUI/voice tests, and packaging with signed releases.
 5. Say `yes`, then show the grounded completion and audit record.
 6. Say `remember that I prefer concise answers`, then ask about the preference
    in a later conversation.
+7. In the dashboard, start a Super Mission and show its saved steps, pause,
+   resume, and per-step verification.

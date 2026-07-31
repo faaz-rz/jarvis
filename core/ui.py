@@ -36,6 +36,10 @@ class BaseUI(abc.ABC):
     def end_stream(self):
         pass
 
+    def emit_event(self, event_type: str, data=None):
+        """Publish an operational event when the UI supports live activity."""
+        pass
+
 class ConsoleUI(BaseUI):
     def __init__(self):
         self._streaming = False

@@ -54,6 +54,16 @@ def default_database_path(memory_path=None) -> Path:
     return PROJECT_ROOT / "jarvis_memory.db"
 
 
+def default_missions_path(memory_path=None) -> Path:
+    configured = configured_path("JARVIS_MISSIONS_PATH")
+    if configured:
+        return configured
+    if memory_path:
+        source = Path(memory_path)
+        return source.with_name(f"{source.stem}.missions.db")
+    return PROJECT_ROOT / "jarvis_memory.missions.db"
+
+
 def default_model_path() -> Optional[Path]:
     configured = configured_path("JARVIS_GGUF_MODEL_PATH")
     if configured:

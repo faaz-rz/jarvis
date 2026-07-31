@@ -48,8 +48,10 @@ class SystemSkill(BaseSkill):
         if lower in {"start listening", "resume listening", "enable voice"}:
             voice = getattr(self.context.engine, "voice_manager", None)
             if voice and voice.start_listening():
+                self._emit_voice_state(True)
                 self.context.speak("Voice listening is active.")
             else:
+                self._emit_voice_state(False)
                 self.context.speak("Voice input is not available.")
             return True
 
@@ -57,6 +59,7 @@ class SystemSkill(BaseSkill):
             voice = getattr(self.context.engine, "voice_manager", None)
             if voice:
                 voice.stop_listening()
+                self._emit_voice_state(False)
                 self.context.speak("Voice listening is paused.")
             else:
                 self.context.speak("Voice input is not enabled.")
@@ -96,6 +99,15 @@ class SystemSkill(BaseSkill):
             return True
 
         return False
+
+    def _emit_voice_state(self, listening):
+        emit = getattr(self.context.engine, "_emit_ui_event", None)
+        if emit:
+            emit(
+                "voice_state",
+                enabled=bool(getattr(self.context.engine, "voice_manager", None)),
+                listening=bool(listening),
+            )
 
     def tools(self):
         return [

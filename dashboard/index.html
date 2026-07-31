@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>JARVIS — Local Intelligence</title>
+  <meta name="description" content="Local one-brain command interface for JARVIS and Qwen.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell" id="app">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="JARVIS dashboard home">
+        <span class="brand-mark" aria-hidden="true">J</span>
+        <span>
+          <strong>JARVIS</strong>
+          <small>Local intelligence system</small>
+        </span>
+      </a>
+
+      <div class="system-pills" aria-label="System status">
+        <span class="system-pill online"><i aria-hidden="true"></i>Local only</span>
+        <span class="system-pill" id="model-pill">Qwen</span>
+        <span class="system-pill" id="tool-pill">0 capabilities</span>
+      </div>
+
+      <div class="topbar-actions">
+        <span class="clock" id="clock" aria-label="Local time">--:--</span>
+        <button class="icon-action mission-launch" id="mission-button" type="button">
+          <span aria-hidden="true">✦</span> Super Mission
+        </button>
+        <button class="icon-action" id="voice-button" type="button" aria-pressed="false">
+          <span aria-hidden="true">◉</span> Voice
+        </button>
+        <button class="icon-action danger" id="shutdown-button" type="button">
+          <span aria-hidden="true">⏻</span> Exit
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="task-panel" aria-labelledby="task-heading">
+        <div class="section-heading">
+          <span class="eyebrow">Current objective</span>
+          <span class="live-indicator"><i aria-hidden="true"></i>Live</span>
+        </div>
+        <h1 id="task-heading">Awaiting your instruction</h1>
+        <p class="task-copy" id="task-copy">
+          Ask JARVIS to reason, remember, research, see, or act on this computer.
+        </p>
+
+        <section class="mission-panel" id="mission-panel" aria-labelledby="mission-title" hidden>
+          <div class="mission-heading">
+            <h2 id="mission-title">Super Mission</h2>
+            <span class="mission-status" id="mission-status">Planning</span>
+          </div>
+          <p id="mission-summary"></p>
+          <ol class="mission-steps" id="mission-steps"></ol>
+          <div class="mission-controls">
+            <button class="quiet-button" id="mission-pause" type="button">Pause</button>
+            <button class="quiet-button" id="mission-resume" type="button">Resume</button>
+            <button class="quiet-button danger" id="mission-cancel" type="button">Cancel</button>
+          </div>
+        </section>
+
+        <ol class="task-steps" id="task-steps">
+          <li data-step="understand"><i>1</i><span>Understand request</span></li>
+          <li data-step="recall"><i>2</i><span>Recall useful context</span></li>
+          <li data-step="select"><i>3</i><span>Select capability</span></li>
+          <li data-step="act"><i>4</i><span>Act with permission</span></li>
+          <li data-step="verify"><i>5</i><span>Verify the result</span></li>
+        </ol>
+
+        <div class="privacy-note">
+          <span aria-hidden="true">⌾</span>
+          <div>
+            <strong>Private by design</strong>
+            <p>Qwen, memory, and controls stay on this machine.</p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="intelligence-stage" aria-labelledby="brain-heading">
+        <div class="brain-heading">
+          <div>
+            <span class="eyebrow">Unified intelligence</span>
+            <h2 id="brain-heading">One brain. Many abilities.</h2>
+          </div>
+          <div class="state-readout" role="status" aria-live="polite">
+            <span>State</span>
+            <strong id="state-label">Starting</strong>
+          </div>
+        </div>
+
+        <div class="brain-canvas" id="brain-canvas">
+          <div class="grid-halo" aria-hidden="true"></div>
+          <canvas class="connections" id="connections" aria-hidden="true"></canvas>
+
+          <button class="capability-node node-voice" data-capability="voice" type="button">
+            <span class="node-glyph" aria-hidden="true">VO</span>
+            <strong>Voice</strong>
+            <small>Listen & speak</small>
+          </button>
+          <button class="capability-node node-vision" data-capability="vision" type="button">
+            <span class="node-glyph" aria-hidden="true">VI</span>
+            <strong>Vision</strong>
+            <small>Understand screen</small>
+          </button>
+          <button class="capability-node node-research" data-capability="research" type="button">
+            <span class="node-glyph" aria-hidden="true">RE</span>
+            <strong>Research</strong>
+            <small>Search & synthesize</small>
+          </button>
+          <button class="capability-node node-desktop" data-capability="desktop" type="button">
+            <span class="node-glyph" aria-hidden="true">AP</span>
+            <strong>Applications</strong>
+            <small>Open & navigate</small>
+          </button>
+          <button class="capability-node node-system" data-capability="system" type="button">
+            <span class="node-glyph" aria-hidden="true">SY</span>
+            <strong>System</strong>
+            <small>Status & control</small>
+          </button>
+          <button class="capability-node node-files" data-capability="files" type="button">
+            <span class="node-glyph" aria-hidden="true">FI</span>
+            <strong>Files</strong>
+            <small>Create safely</small>
+          </button>
+          <button class="capability-node node-memory" data-capability="memory" type="button">
+            <span class="node-glyph" aria-hidden="true">ME</span>
+            <strong>Memory</strong>
+            <small>Recall & learn</small>
+          </button>
+          <button class="capability-node node-code" data-capability="code" type="button">
+            <span class="node-glyph" aria-hidden="true">CO</span>
+            <strong>Code</strong>
+            <small>Build & debug</small>
+          </button>
+
+          <div class="jarvis-core" id="jarvis-core">
+            <div class="core-ring ring-outer" aria-hidden="true"></div>
+            <div class="core-ring ring-middle" aria-hidden="true"></div>
+            <div class="core-energy" aria-hidden="true"></div>
+            <div class="core-label">
+              <span>JARVIS</span>
+              <strong>CORE</strong>
+              <small id="core-state">BOOTING</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="capability-inspector" id="capability-inspector" aria-live="polite">
+          <strong>JARVIS Core</strong>
+          <span>Capabilities activate only when the central brain needs them.</span>
+        </div>
+      </section>
+
+      <aside class="activity-panel" aria-labelledby="activity-heading">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Operational trace</span>
+            <h2 id="activity-heading">Live activity</h2>
+          </div>
+          <button class="quiet-button" id="clear-activity" type="button">Clear</button>
+        </div>
+        <div class="activity-list" id="activity-list" aria-live="polite">
+          <p class="empty-state">Activity will appear as JARVIS works.</p>
+        </div>
+
+        <div class="conversation-heading">
+          <span class="eyebrow">Conversation</span>
+        </div>
+        <div class="conversation-list" id="conversation-list" aria-live="polite">
+          <p class="empty-state">Your conversation will appear here.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="command-dock">
+      <form id="message-form">
+        <label class="sr-only" for="message-input">Ask JARVIS anything</label>
+        <textarea
+          id="message-input"
+          rows="1"
+          maxlength="4000"
+          placeholder="Ask JARVIS anything..."
+          autocomplete="off"
+        ></textarea>
+        <div class="command-actions">
+          <button class="stop-button" id="stop-button" type="button">
+            <span aria-hidden="true">■</span> Stop
+          </button>
+          <button class="send-button" type="submit">
+            Send <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </form>
+      <p><kbd>Enter</kbd> send <span>•</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> new line</p>
+    </footer>
+  </div>
+
+  <dialog class="permission-dialog" id="permission-dialog">
+    <form method="dialog">
+      <span class="permission-mark" aria-hidden="true">!</span>
+      <span class="eyebrow">Human checkpoint</span>
+      <h2>JARVIS needs permission</h2>
+      <div class="permission-copy" id="permission-copy"></div>
+      <p class="permission-footnote">
+        The action has not run. Review it before allowing access.
+      </p>
+      <div class="permission-actions">
+        <button class="deny-button" id="deny-button" value="deny" type="button">Deny</button>
+        <button class="allow-button" id="allow-button" value="allow" type="button">Allow action</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="permission-dialog mission-dialog" id="mission-dialog">
+    <form id="mission-form">
+      <span class="permission-mark mission-mark" aria-hidden="true">✦</span>
+      <span class="eyebrow">Persistent goal mode</span>
+      <h2>Start a Super Mission</h2>
+      <label for="mission-goal">What should JARVIS accomplish?</label>
+      <textarea
+        id="mission-goal"
+        rows="5"
+        maxlength="2000"
+        placeholder="Example: Review this project, identify the highest-impact reliability issue, implement a safe fix, and verify it."
+        required
+      ></textarea>
+      <p class="permission-footnote">
+        Qwen creates a saved step-by-step plan. Protected actions still pause for your approval.
+      </p>
+      <div class="permission-actions">
+        <button class="deny-button" id="mission-close" type="button">Close</button>
+        <button class="allow-button" type="submit">Create plan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

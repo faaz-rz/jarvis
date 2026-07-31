@@ -10,6 +10,9 @@ instead of preventing the application from starting.
 
 ## Features
 
+- Local one-brain dashboard with a live capability graph and activity trace
+- Persistent Super Missions that plan, execute, verify, pause, and resume
+- Real-time chat, streaming, STOP, voice, and permission controls in the browser
 - Tkinter chat interface with an automatic console fallback
 - Text-to-speech through `pyttsx3`
 - Wake-word voice commands with one-step and two-step interaction
@@ -32,7 +35,7 @@ instead of preventing the application from starting.
 ```text
 Microphone -> VAD -> Vosk/Google --+
                                    +-> JarvisEngine
-Text or Tkinter UI ----------------+       |
+Dashboard / text / Tkinter UI -----+       |
                                            +-> learned commands / deterministic skills
                                            |
                                            +-> Qwen agent loop
@@ -46,7 +49,17 @@ Text or Tkinter UI ----------------+       |
                                       streamed UI response -> TTS
                                                |
                                       JSON + SQLite memory
+
+Super Mission goal -> Qwen structured plan -> saved mission steps
+                                             -> execute one step at a time
+                                             -> tool evidence / permission
+                                             -> verify, continue, or pause
 ```
+
+The default interface is now a local browser dashboard bound only to
+`127.0.0.1`. It visualizes one central JARVIS/Qwen brain and activates nearby
+capability nodes only when real engine events occur. It does not expose or
+pretend to display private model chain-of-thought.
 
 The hybrid router intentionally keeps predictable commands such as `open
 calculator` fast and deterministic. Requests that need reasoning go to Qwen,
@@ -65,6 +78,9 @@ The important modules are:
 - `core/voice.py`: audio capture, VAD, transcription, and wake-word state
 - `core/tts.py`: queued text-to-speech worker
 - `core/ui.py`: console and Tkinter interfaces
+- `core/dashboard.py`: secure local HTTP, live events, and browser control bridge
+- `core/missions.py`: durable Super Mission plans, steps, state, and recovery
+- `dashboard/`: the one-brain interface, capability graph, chat, and activity UI
 - `skills/`: independently loadable assistant capabilities
 
 ## Requirements
@@ -95,7 +111,8 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Make sure Ollama is running, then start JARVIS with `python jarvis.py`.
+Make sure Ollama is running, then start JARVIS with `python jarvis.py`. The local
+brain dashboard opens automatically.
 
 ### macOS or Linux
 
@@ -121,9 +138,12 @@ python jarvis.py --console --no-voice
 Useful options:
 
 ```text
---console          use the terminal instead of Tkinter
+--console          use the terminal instead of the brain dashboard
+--tk               use the legacy Tkinter window
 --no-voice         disable microphone input
 --no-long-term-memory  disable SQLite memory for this run
+--dashboard-port N choose the preferred local dashboard port
+--no-browser        start the dashboard without opening it automatically
 --backend NAME     auto, ollama, or llama_cpp
 --ollama-model ID  select an installed Ollama model
 --model PATH       use a direct GGUF model with llama.cpp
@@ -148,8 +168,11 @@ important ones are:
 | `CODE_MODEL_PATH` | Optional GGUF coding model |
 | `JARVIS_MEMORY_PATH` | Memory JSON location |
 | `JARVIS_DB_PATH` | SQLite long-term memory location |
+| `JARVIS_MISSIONS_PATH` | SQLite Super Mission state; defaults beside the JSON memory file |
 | `JARVIS_MEMORY_SIMILARITY` | Semantic retrieval threshold |
 | `JARVIS_AUDIT_PATH` | Executed tool-call audit log |
+| `JARVIS_DASHBOARD_PORT` | Preferred local dashboard port; defaults to `8765` |
+| `JARVIS_NO_BROWSER` | Start the dashboard without opening a browser |
 | `JARVIS_SPEECH_BACKEND` | `auto`, `vosk`, `offline`, or `google` |
 | `VOSK_MODEL_PATH` | Offline speech model; defaults to `Vm` |
 | `JARVIS_AUTOMATION_ROOT` | Directory automation is allowed to modify |
@@ -197,14 +220,43 @@ create folder demo
 shutdown pc
 ```
 
+## Super Mission mode
+
+Use the **Super Mission** button in the dashboard for a larger goal, or type:
+
+```text
+Super Mission: review this project, fix its highest-impact reliability issue,
+and verify the result
+```
+
+Qwen first returns a schema-validated plan of one to six steps. JARVIS saves the
+plan in SQLite, executes only one step at a time, records tool evidence, and
+continues only when that step has a grounded result. A step marked as requiring
+a real capability cannot succeed without a successful tool result. Sensitive
+tools still stop at the normal human permission checkpoint.
+
+Mission controls are available in the dashboard and as text commands:
+
+```text
+mission status
+pause mission
+resume mission
+cancel mission
+```
+
+If the application closes during a mission, in-progress work is recovered as
+paused on the next launch. Resume it explicitly after reviewing the saved steps.
+This feature uses Qwen prompting and structured output; it does not modify or
+fine-tune Qwen's model weights.
+
 File creation and power actions require confirmation. Automated files are
 restricted to `JARVIS_AUTOMATION_ROOT`. PowerShell accepts only a small allowlist
 and rejects command chaining and destructive verbs.
 
 When Qwen chooses a sensitive, write, execute, or destructive tool, JARVIS pauses
 the agent loop and asks for `yes` or `no`. Nothing is executed before approval.
-The Tkinter `STOP` button—or `stop generating` in text mode—cancels an active
-stream.
+The dashboard and Tkinter `STOP` buttons—or `stop generating` in text
+mode—cancel an active stream.
 
 ## Adding a skill
 
@@ -253,7 +305,8 @@ skills.
 
 ## Tests
 
-The test suite covers memory persistence and concurrency, semantic retrieval,
+The test suite covers mission persistence and recovery, memory persistence and
+concurrency, semantic retrieval,
 tool schemas and audits, central confirmation behavior, streamed native tool
 calls, skill routing, voice routing, model fallbacks, and clean shutdown:
 
@@ -264,6 +317,9 @@ python -m unittest discover -v
 ## Privacy and security
 
 - Qwen through Ollama and Vosk speech recognition run locally.
+- The dashboard binds to `127.0.0.1`, rejects cross-origin control requests,
+  requires a random session token for actions, and sends a restrictive browser
+  security policy.
 - Google speech recognition is online; select `offline` to forbid that fallback.
 - Screen capture always requires confirmation when Qwen requests it as a tool.
 - Memory and audit files are plain text/SQLite. Protect or relocate them on

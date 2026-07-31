@@ -8,6 +8,9 @@ jarvis_audit.jsonl
 jarvis_memory.db
 jarvis_memory.db-shm
 jarvis_memory.db-wal
+jarvis_memory.missions.db
+jarvis_memory.missions.db-shm
+jarvis_memory.missions.db-wal
 debug_log_cuda.txt
 verify_log.txt
 

@@ -107,6 +107,13 @@ class SkillManager:
                 try:
                     if skill.handle(text):
                         logging.info("Request handled by skill: %s", skill.name)
+                        emit = getattr(
+                            self.context.engine,
+                            "_emit_ui_event",
+                            None,
+                        )
+                        if emit:
+                            emit("skill_used", skill=skill.name)
                         return True
                 except Exception as e:
                     logging.exception(f"Error in skill {skill.name}: {e}")

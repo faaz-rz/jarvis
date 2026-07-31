@@ -39,10 +39,16 @@ def configure_windows_cuda_paths():
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run the JARVIS personal assistant.")
-    parser.add_argument(
+    interface = parser.add_mutually_exclusive_group()
+    interface.add_argument(
         "--console",
         action="store_true",
-        help="Use the terminal interface instead of Tkinter.",
+        help="Use the terminal interface instead of the brain dashboard.",
+    )
+    interface.add_argument(
+        "--tk",
+        action="store_true",
+        help="Use the legacy Tkinter interface instead of the brain dashboard.",
     )
     parser.add_argument(
         "--no-voice",
@@ -63,6 +69,17 @@ def parse_args(argv=None):
     parser.add_argument(
         "--ollama-model",
         help="Ollama model name, for example qwen3.5:4b.",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        help="Preferred local brain-dashboard port; defaults to 8765.",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Start the dashboard without opening a browser automatically.",
     )
     parser.add_argument("--memory", help="Path to the JSON memory file.")
     parser.add_argument(
@@ -94,6 +111,9 @@ def main(argv=None):
             enable_voice=not args.no_voice,
             prefer_gui=not args.console,
             enable_long_term_memory=not args.no_long_term_memory,
+            prefer_dashboard=not args.tk,
+            dashboard_port=args.dashboard_port,
+            open_dashboard=not args.no_browser,
         )
         engine.start()
         return 0
